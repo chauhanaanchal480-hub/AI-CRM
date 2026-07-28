@@ -8,7 +8,7 @@ import { asyncHandler } from '../../utils/asyncHandler.js';
 import { sendSuccess } from '../../utils/apiResponse.js';
 import { ApiError } from '../../utils/ApiError.js';
 
-const idParam = z.object({ id: z.string().min(1) });
+const idParam = z.object({ id: z.string().cuid('Invalid id') });
 
 export const notificationsRouter = Router();
 notificationsRouter.use(authenticate);

@@ -9,7 +9,10 @@ async function bootstrap() {
     await prisma.$connect();
     logger.info('Database connected');
   } catch (err) {
-    logger.error({ err }, 'Failed to connect to the database');
+    logger.error(
+      { event: 'database.connection_failed', errorName: err instanceof Error ? err.name : typeof err },
+      'Failed to connect to the database',
+    );
     process.exit(1);
   }
 

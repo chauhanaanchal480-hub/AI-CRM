@@ -32,8 +32,7 @@ export class GeminiProvider extends BaseHttpAiProvider {
     );
 
     if (!res.ok) {
-      const text = await res.text();
-      logger.error({ status: res.status, text }, 'Gemini API error');
+      logger.error({ event: 'ai.provider_error', provider: this.name, status: res.status }, 'Gemini API error');
       throw new Error(`Gemini API error ${res.status}`);
     }
 

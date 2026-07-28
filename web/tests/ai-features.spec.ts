@@ -101,7 +101,7 @@ test.describe('AI assistant', () => {
   });
 
   test('AI endpoints 404 for unknown customer', async ({ api }) => {
-    const res = await api.request.post('/api/ai/customers/no-such-id/summarize', { headers: api.authHeaders });
+    const res = await api.request.post('/api/ai/customers/c000000000000000000000000/summarize', { headers: api.authHeaders });
     expect(res.status()).toBe(404);
   });
 });

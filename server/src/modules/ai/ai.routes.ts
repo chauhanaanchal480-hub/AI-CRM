@@ -11,7 +11,7 @@ import { aiProvider } from '../../services/ai/index.js';
 import type { InteractionInput } from '../../services/ai/AiProvider.js';
 import { logActivity } from '../../services/activity.service.js';
 
-const idParam = z.object({ id: z.string().min(1) });
+const idParam = z.object({ id: z.string().cuid('Invalid id') });
 
 /** Assemble the interaction history the AI provider reasons over. */
 async function loadContext(customerId: string): Promise<{ name: string; input: InteractionInput }> {

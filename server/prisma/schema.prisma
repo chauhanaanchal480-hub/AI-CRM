@@ -87,43 +87,96 @@ enum InsightKind {
 // ─────────────────────────────── Models ──────────────────────────────
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  firstName    String
-  lastName     String
-  role         Role     @default(EMPLOYEE)
-  avatarUrl    String?
-  title        String?
-  phone        String?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                String    @id @default(cuid())
+  email             String    @unique
+  passwordHash      String
+  firstName         String
+  lastName          String
+  role              Role      @default(EMPLOYEE)
+  avatarUrl         String?
+  title             String?
+  phone             String?
+  isActive          Boolean   @default(true)
+  currentLoginAt    DateTime?
+  previousLoginAt   DateTime?
+  lastFailedLoginAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  refreshTokens   RefreshToken[]
-  ownedCustomers  Customer[]     @relation("CustomerOwner")
-  assignedLeads   Lead[]         @relation("LeadAssignee")
-  ownedDeals      Deal[]         @relation("DealOwner")
-  tasks           Task[]         @relation("TaskAssignee")
-  activities      Activity[]
-  notes           Note[]
-  emails          EmailLog[]
-  uploads         Attachment[]
-  notifications   Notification[]
+  refreshTokens  RefreshToken[]
+  sessions       Session[]
+  loginHistory   LoginHistory[]
+  ownedCustomers Customer[]     @relation("CustomerOwner")
+  assignedLeads  Lead[]         @relation("LeadAssignee")
+  ownedDeals     Deal[]         @relation("DealOwner")
+  tasks          Task[]         @relation("TaskAssignee")
+  activities     Activity[]
+  notes          Note[]
+  emails         EmailLog[]
+  uploads        Attachment[]
+  notifications  Notification[]
 
   @@index([role])
 }
 
 model RefreshToken {
-  id        String   @id @default(cuid())
-  token     String   @unique
+  id        String    @id @default(cuid())
+  token     String    @unique
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   revokedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
+  sessionId String?
+  session   Session?  @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
 
   @@index([userId])
+  @@index([sessionId])
+}
+
+model Session {
+  sessionId         String         @id @default(uuid())
+  userId            String
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  issuedAt          DateTime       @default(now())
+  expiresAt         DateTime
+  absoluteExpiresAt DateTime
+  lastActivity      DateTime       @default(now())
+  ip                String
+  userAgent         String
+  deviceFingerprint String
+  browser           String
+  operatingSystem   String
+  deviceType        String
+  revokedAt         DateTime?
+  refreshTokens     RefreshToken[]
+  loginHistory      LoginHistory[]
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@index([absoluteExpiresAt])
+  @@index([deviceFingerprint])
+}
+
+model LoginHistory {
+  id                String   @id @default(cuid())
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailHash         String
+  success           Boolean
+  timestamp         DateTime @default(now())
+  ip                String
+  userAgent         String
+  deviceFingerprint String
+  browser           String
+  operatingSystem   String
+  deviceType        String
+  sessionId         String?
+  session           Session? @relation(fields: [sessionId], references: [sessionId], onDelete: SetNull)
+
+  @@index([userId, timestamp])
+  @@index([emailHash, timestamp])
+  @@index([sessionId])
 }
 
 model Customer {
@@ -145,14 +198,14 @@ model Customer {
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
 
-  leads       Lead[]
-  deals       Deal[]
-  activities  Activity[]
+  leads         Lead[]
+  deals         Deal[]
+  activities    Activity[]
   customerNotes Note[]
-  emails      EmailLog[]
-  attachments Attachment[]
-  tasks       Task[]
-  insights    AiInsight[]
+  emails        EmailLog[]
+  attachments   Attachment[]
+  tasks         Task[]
+  insights      AiInsight[]
 
   @@index([ownerId])
   @@index([status])
@@ -210,23 +263,23 @@ model Stage {
 }
 
 model Deal {
-  id                 String     @id @default(cuid())
-  title              String
-  value              Decimal    @default(0) @db.Decimal(12, 2)
-  currency           String     @default("USD")
-  status             DealStatus @default(OPEN)
-  probability        Int        @default(50)
-  position           Int        @default(0)
-  expectedCloseDate  DateTime?
-  closedAt           DateTime?
-  stageId            String
-  stage              Stage      @relation(fields: [stageId], references: [id])
-  customerId         String
-  customer           Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  ownerId            String
-  owner              User       @relation("DealOwner", fields: [ownerId], references: [id])
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
+  id                String     @id @default(cuid())
+  title             String
+  value             Decimal    @default(0) @db.Decimal(12, 2)
+  currency          String     @default("USD")
+  status            DealStatus @default(OPEN)
+  probability       Int        @default(50)
+  position          Int        @default(0)
+  expectedCloseDate DateTime?
+  closedAt          DateTime?
+  stageId           String
+  stage             Stage      @relation(fields: [stageId], references: [id])
+  customerId        String
+  customer          Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  ownerId           String
+  owner             User       @relation("DealOwner", fields: [ownerId], references: [id])
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
 
   activities  Activity[]
   tasks       Task[]
@@ -311,7 +364,7 @@ model EmailLog {
 }
 
 model Attachment {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   filename     String
   originalName String
   mimeType     String

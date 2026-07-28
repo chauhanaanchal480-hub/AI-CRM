@@ -10,9 +10,9 @@ import { paginationQuery, toPrismaPagination } from '../../utils/pagination.js';
 import type { Prisma } from '@prisma/client';
 
 const listQuery = paginationQuery.extend({
-  customerId: z.string().optional(),
-  dealId: z.string().optional(),
-  type: z.string().optional(),
+  customerId: z.string().max(64).optional(),
+  dealId: z.string().max(64).optional(),
+  type: z.enum(['NOTE', 'CALL', 'EMAIL', 'MEETING', 'STATUS_CHANGE', 'FILE', 'DEAL_UPDATE', 'TASK', 'AI_INSIGHT']).optional(),
 });
 
 export const activitiesRouter = Router();

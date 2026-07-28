@@ -13,6 +13,8 @@ const schema = z.object({
   JWT_REFRESH_SECRET: z.string().min(8, 'JWT_REFRESH_SECRET is required'),
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL: z.string().default('7d'),
+  SESSION_IDLE_TTL: z.string().regex(/^\d+[smhd]$/).default('30m'),
+  SESSION_ABSOLUTE_TTL: z.string().regex(/^\d+[smhd]$/).default('30d'),
 
   UPLOAD_DIR: z.string().default('uploads'),
   MAX_UPLOAD_MB: z.coerce.number().default(10),
