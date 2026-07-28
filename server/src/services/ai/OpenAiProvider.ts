@@ -23,8 +23,7 @@ export class OpenAiProvider extends BaseHttpAiProvider {
       }),
     });
     if (!res.ok) {
-      const text = await res.text();
-      logger.error({ status: res.status, text }, 'OpenAI API error');
+      logger.error({ event: 'ai.provider_error', provider: this.name, status: res.status }, 'OpenAI API error');
       throw new Error(`OpenAI API error ${res.status}`);
     }
     const json = (await res.json()) as { choices: { message: { content: string } }[] };

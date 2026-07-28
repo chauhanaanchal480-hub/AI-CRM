@@ -22,8 +22,7 @@ export class AnthropicAiProvider extends BaseHttpAiProvider {
       }),
     });
     if (!res.ok) {
-      const text = await res.text();
-      logger.error({ status: res.status, text }, 'Anthropic API error');
+      logger.error({ event: 'ai.provider_error', provider: this.name, status: res.status }, 'Anthropic API error');
       throw new Error(`Anthropic API error ${res.status}`);
     }
     const json = (await res.json()) as { content: { type: string; text: string }[] };

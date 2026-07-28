@@ -349,11 +349,13 @@ export default function CustomerDetailPage() {
 }
 
 function InfoRow({ icon: Icon, value, href }: { icon: typeof Mail; value: string; href?: string }) {
+  // Only allow safe link schemes; stored data could otherwise smuggle javascript: URLs.
+  const safeHref = href && /^(https?:|mailto:|tel:)/i.test(href.trim()) ? href : undefined;
   const content = (
     <span className="flex items-center gap-2.5 text-muted-foreground">
       <Icon className="h-4 w-4 shrink-0" />
       <span className="truncate text-foreground">{value}</span>
     </span>
   );
-  return href ? <a href={href} target="_blank" rel="noreferrer" className="block hover:underline">{content}</a> : content;
+  return safeHref ? <a href={safeHref} target="_blank" rel="noreferrer" className="block hover:underline">{content}</a> : content;
 }

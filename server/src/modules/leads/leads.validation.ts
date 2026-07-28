@@ -7,7 +7,7 @@ const sourceEnum = z.enum(['WEBSITE', 'REFERRAL', 'COLD_CALL', 'EVENT', 'SOCIAL'
 export const leadListQuery = paginationQuery.extend({
   status: statusEnum.optional(),
   source: sourceEnum.optional(),
-  assignedToId: z.string().optional(),
+  assignedToId: z.string().max(64).optional(),
 });
 
 export const createLeadSchema = z.object({
@@ -16,12 +16,12 @@ export const createLeadSchema = z.object({
   source: sourceEnum.default('WEBSITE'),
   value: z.coerce.number().min(0).default(0),
   contactName: z.string().max(120).optional(),
-  contactEmail: z.string().email().optional().or(z.literal('')),
+  contactEmail: z.string().email().max(254).optional().or(z.literal('')),
   contactPhone: z.string().max(40).optional(),
-  customerId: z.string().optional(),
-  assignedToId: z.string().optional(),
+  customerId: z.string().max(64).optional(),
+  assignedToId: z.string().max(64).optional(),
 });
 
 export const updateLeadSchema = createLeadSchema.partial();
-export const idParam = z.object({ id: z.string().min(1) });
+export const idParam = z.object({ id: z.string().cuid('Invalid id') });
 export type LeadListQuery = z.infer<typeof leadListQuery>;

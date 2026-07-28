@@ -13,7 +13,7 @@ const createSchema = z.object({
   customerId: z.string().min(1),
   body: z.string().min(1).max(4000),
 });
-const idParam = z.object({ id: z.string().min(1) });
+const idParam = z.object({ id: z.string().cuid('Invalid id') });
 
 export const notesRouter = Router();
 notesRouter.use(authenticate);

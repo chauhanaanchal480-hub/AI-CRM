@@ -27,4 +27,4 @@ export const moveDealSchema = z.object({
   position: z.coerce.number().int().min(0),
 });
 
-export const idParam = z.object({ id: z.string().min(1) });
+export const idParam = z.object({ id: z.string().cuid('Invalid id') });

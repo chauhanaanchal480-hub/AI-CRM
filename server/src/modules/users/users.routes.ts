@@ -9,13 +9,15 @@ import { asyncHandler } from '../../utils/asyncHandler.js';
 import { sendSuccess } from '../../utils/apiResponse.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { hashPassword, verifyPassword } from '../../utils/password.js';
+import { passwordSchema } from '../auth/auth.validation.js';
+import { logger } from '../../lib/logger.js';
 
 const publicUser = {
   id: true, email: true, firstName: true, lastName: true, role: true,
   avatarUrl: true, title: true, phone: true, isActive: true, createdAt: true,
 } as const;
 
-const idParam = z.object({ id: z.string().min(1) });
+const idParam = z.object({ id: z.string().cuid('Invalid id') });
 const updateProfileSchema = z.object({
   firstName: z.string().min(1).max(60).optional(),
   lastName: z.string().min(1).max(60).optional(),
@@ -24,8 +26,8 @@ const updateProfileSchema = z.object({
   avatarUrl: z.string().url().optional().or(z.literal('')),
 });
 const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1),
-  newPassword: z.string().min(8),
+  currentPassword: z.string().min(1).max(128),
+  newPassword: passwordSchema,
 });
 const updateRoleSchema = z.object({
   role: z.enum(['ADMIN', 'SALES_MANAGER', 'EMPLOYEE']).optional(),
@@ -67,11 +69,13 @@ usersRouter.post(
     const { currentPassword, newPassword } = req.body as z.infer<typeof changePasswordSchema>;
     const user = await prisma.user.findUnique({ where: { id: req.user!.sub } });
     if (!user || !(await verifyPassword(currentPassword, user.passwordHash))) {
+      logger.warn({ event: 'auth.password_change_failed', userId: req.user!.sub }, 'Password change rejected: wrong current password');
       throw ApiError.badRequest('Current password is incorrect');
     }
     await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(newPassword) } });
     // Revoke refresh tokens so other sessions must re-authenticate.
     await prisma.refreshToken.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
+    logger.info({ event: 'auth.password_changed', userId: user.id }, 'Password changed');
     return sendSuccess(res, { message: 'Password updated' });
   }),
 );
@@ -82,6 +86,10 @@ usersRouter.patch(
   authorize('ADMIN'),
   validate({ params: idParam, body: updateRoleSchema }),
   asyncHandler(async (req: Request, res: Response) => {
+    // An admin cannot demote or deactivate their own account.
+    if (req.params.id === req.user!.sub) {
+      throw ApiError.forbidden('You cannot change your own role or status');
+    }
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data: req.body as z.infer<typeof updateRoleSchema>,

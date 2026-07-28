@@ -13,6 +13,7 @@ export default defineConfig({
       // Proxy API calls in dev so the browser talks to same-origin.
       '/api': { target: 'http://localhost:4000', changeOrigin: true },
       '/uploads': { target: 'http://localhost:4000', changeOrigin: true },
+      '/health': { target: 'http://localhost:4000', changeOrigin: true },
     },
   },
 });
