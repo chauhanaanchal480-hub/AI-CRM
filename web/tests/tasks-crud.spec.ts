@@ -61,19 +61,22 @@ test.describe('Task CRUD', () => {
     const task = await createTask(api.request, api.authHeaders, { title, priority: 'MEDIUM' });
 
     await page.reload();
-    const card = () => page.locator('.card-surface', { hasText: title }).first();
-    const todoColumn = page.locator('div', { has: page.getByRole('heading', { name: /^To do$/ }) });
-    void todoColumn;
+    const cardInColumn = (columnName: RegExp) =>
+      page
+        .getByRole('heading', { name: columnName })
+        .locator('..')
+        .locator('..')
+        .locator('.card-surface', { hasText: title });
 
     // TODO → IN_PROGRESS
-    await card().getByTitle(/cycle status/i).click();
-    await expect(
-      page.locator('div:below(h3:text("In progress"))').locator('.card-surface', { hasText: title }).first(),
-    ).toBeVisible();
+    await cardInColumn(/^To do$/).getByTitle(/cycle status/i).click();
+    await expect(cardInColumn(/^In progress$/)).toBeVisible();
 
     // IN_PROGRESS → DONE (title gets line-through styling)
-    await card().getByTitle(/cycle status/i).click();
-    await expect(card().locator('p.line-through, p[class*="line-through"]').first()).toBeVisible();
+    await cardInColumn(/^In progress$/).getByTitle(/cycle status/i).click();
+    const doneCard = cardInColumn(/^Done$/);
+    await expect(doneCard).toBeVisible();
+    await expect(doneCard.getByText(title, { exact: true })).toHaveClass(/line-through/);
 
     await deleteEntity(api.request, api.authHeaders, 'tasks', task.id);
   });

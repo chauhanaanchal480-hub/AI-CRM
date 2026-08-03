@@ -9,6 +9,7 @@ import { authenticate } from '../../middleware/authenticate.js';
 import { validate } from '../../middleware/validate.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { exportRateLimiter } from '../../middleware/rateLimit.js';
 
 const params = z.object({ entity: z.enum(['customers', 'leads', 'deals']) });
 
@@ -50,7 +51,7 @@ async function loadRows(entity: string, role: Role, userId: string) {
 }
 
 export const exportRouter = Router();
-exportRouter.use(authenticate);
+exportRouter.use(authenticate, exportRateLimiter);
 
 // Excel export: GET /export/:entity/excel
 exportRouter.get(

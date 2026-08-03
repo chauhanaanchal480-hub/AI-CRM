@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './helpers/fixtures';
 test('Login page loads correctly', async ({ page }) => {
   await page.goto('/login');
 
@@ -67,16 +67,8 @@ test('Invalid login shows error', async ({ page }) => {
   await expect(page).toHaveURL(/login/);
 });
 
-test('Dashboard loads', async ({ page }) => {
-  // Login
-  await page.goto('/login');
-
-  await page.locator('input[name="email"]').fill('admin@crm.dev');
-  await page.locator('input[name="password"]').fill('Password123!');
-  await page.getByRole('button', { name: /sign in/i }).click();
-
-  // Dashboard load hone ka wait
-  await page.waitForLoadState('networkidle');
+test('Dashboard loads', async ({ authedPage: page }) => {
+  await page.goto('/app/dashboard');
 
   // URL verify
   await expect(page).toHaveURL(/dashboard/);
@@ -86,45 +78,15 @@ test('Dashboard loads', async ({ page }) => {
     page.getByRole('heading', { name: /Dashboard/i })
   ).toBeVisible();
 });
-test('Leads page loads', async ({ page }) => {
-  // Login
-  await page.goto('/login');
-
-  await page.locator('input[name="email"]').fill('admin@crm.dev');
-  await page.locator('input[name="password"]').fill('Password123!');
-  await page.getByRole('button', { name: /sign in/i }).click();
-
-  // Dashboard ka wait
-  await page.waitForURL(/app\/dashboard/);
-
-  // Sidebar visible hone ka wait
-  await expect(page.getByText(/^Leads$/i)).toBeVisible();
-
-  // Leads click
-  await page.getByText(/^Leads$/i).click();
-
-  // Leads page
-  await page.waitForURL(/app\/leads/);
+test('Leads page loads', async ({ authedPage: page }) => {
+  await page.goto('/app/leads');
 
   // Verify
   await expect(page).toHaveURL(/app\/leads/);
   await expect(page.getByRole('heading', { name: /Leads/i })).toBeVisible();
 });
-test('Customers page loads', async ({ page }) => {
-  // Login
-  await page.goto('/login');
-
-  await page.locator('input[name="email"]').fill('admin@crm.dev');
-  await page.locator('input[name="password"]').fill('Password123!');
-  await page.getByRole('button', { name: /sign in/i }).click();
-
-  // Dashboard
-  await page.waitForURL(/app\/dashboard/);
-
-  // Customers page
-  await page.getByText(/^Customers$/i).click();
-
-  await page.waitForURL(/app\/customers/);
+test('Customers page loads', async ({ authedPage: page }) => {
+  await page.goto('/app/customers');
 
   // Verify
   await expect(page).toHaveURL(/app\/customers/);
@@ -132,23 +94,8 @@ test('Customers page loads', async ({ page }) => {
     page.getByRole('heading', { name: /Customers/i })
   ).toBeVisible();
 });
-test('Deals page loads', async ({ page }) => {
-  // Login page
-  await page.goto('/login');
-
-  // Login
-  await page.locator('input[name="email"]').fill('admin@crm.dev');
-  await page.locator('input[name="password"]').fill('Password123!');
-  await page.getByRole('button', { name: /sign in/i }).click();
-
-  // Dashboard load hone ka wait
-  await page.waitForURL(/app\/dashboard/);
-
-  // Deals page open
-  await page.getByText(/^Deals$/i).click();
-
-  // Deals page load hone ka wait
-  await page.waitForURL(/app\/deals/);
+test('Deals page loads', async ({ authedPage: page }) => {
+  await page.goto('/app/deals');
 
   // URL verify
   await expect(page).toHaveURL(/app\/deals/);
@@ -158,22 +105,8 @@ test('Deals page loads', async ({ page }) => {
     page.getByRole('heading', { name: /Deal Pipeline/i })
   ).toBeVisible();
 });
-test('Tasks page loads', async ({ page }) => {
-  // Login
-  await page.goto('/login');
-
-  await page.locator('input[name="email"]').fill('admin@crm.dev');
-  await page.locator('input[name="password"]').fill('Password123!');
-  await page.getByRole('button', { name: /sign in/i }).click();
-
-  // Dashboard load
-  await page.waitForURL(/app\/dashboard/);
-
-  // Open Tasks
-  await page.getByText(/^Tasks$/i).click();
-
-  // Wait for Tasks page
-  await page.waitForURL(/app\/tasks/);
+test('Tasks page loads', async ({ authedPage: page }) => {
+  await page.goto('/app/tasks');
 
   // Verify URL
   await expect(page).toHaveURL(/app\/tasks/);
@@ -183,17 +116,8 @@ test('Tasks page loads', async ({ page }) => {
     page.getByRole('heading', { name: /Tasks & Reminders/i })
   ).toBeVisible();
 });
-test('Create new lead', async ({ page }) => {
-  await page.goto('/login');
-
-  await page.locator('input[name="email"]').fill('admin@crm.dev');
-  await page.locator('input[name="password"]').fill('Password123!');
-  await page.getByRole('button', { name: /sign in/i }).click();
-
-  await page.waitForURL(/dashboard/);
-
-  await page.getByRole('link', { name: /Leads/i }).click();
-  await page.waitForURL(/app\/leads/);
+test('Create new lead', async ({ authedPage: page }) => {
+  await page.goto('/app/leads');
 
   await page.getByRole('button', { name: /new lead/i }).click();
 
@@ -206,22 +130,8 @@ test('Create new lead', async ({ page }) => {
 ).toBeVisible();
 
   });
-  test("Edit lead modal opens", async ({ page }) => {
-  // Login
-  await page.goto("/login");
-
-  await page.locator('input[name="email"]').fill("admin@crm.dev");
-  await page.locator('input[name="password"]').fill("Password123!");
-  await page.getByRole("button", { name: /sign in/i }).click();
-
-  // Dashboard
-  await page.waitForURL(/app\/dashboard/);
-
-  // Open Leads page
-  await page.getByRole("link", { name: /^Leads$/i }).click();
-
-  // Wait for Leads page
-  await page.waitForURL(/app\/leads/);
+  test("Edit lead modal opens", async ({ authedPage: page }) => {
+  await page.goto('/app/leads');
 
   // Wait until first 3-dot action button is visible
   const actionButton = page
@@ -257,20 +167,8 @@ test('Create new lead', async ({ page }) => {
     page.getByRole("button", { name: /^Cancel$/ })
   ).toBeVisible();
 });
-test("Edit lead successfully", async ({ page }) => {
-  // Login
-  await page.goto("/login");
-
-  await page.locator('input[name="email"]').fill("admin@crm.dev");
-  await page.locator('input[name="password"]').fill("Password123!");
-  await page.getByRole("button", { name: /sign in/i }).click();
-
-  await page.waitForURL(/app\/dashboard/);
-
-  // Leads page
-  await page.getByRole("link", { name: /^Leads$/i }).click();
-
-  await page.waitForURL(/app\/leads/);
+test("Edit lead successfully", async ({ authedPage: page }) => {
+  await page.goto('/app/leads');
 
   // First lead menu
   const actionButton = page
@@ -297,13 +195,7 @@ test("Edit lead successfully", async ({ page }) => {
   ).toBeVisible();
 });
 
-test('Inspect Leads Page', async ({ page }) => {
-  await page.goto('/login');
-
-  await page.locator('input[name="email"]').fill('admin@crm.dev');
-  await page.locator('input[name="password"]').fill('Password123!');
-  await page.getByRole('button', { name: /sign in/i }).click();
-
+test('Inspect Leads Page', async ({ authedPage: page }) => {
   await page.goto('/app/leads');
 
  

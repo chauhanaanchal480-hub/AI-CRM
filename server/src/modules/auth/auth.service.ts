@@ -23,6 +23,8 @@ import {
   sessionSecurityService,
   type SessionRequestContext,
 } from './session.service.js';
+import { mfaService } from './mfa.service.js';
+import { passwordSecurityService } from './password-security.service.js';
 
 // Pre-computed hash so "user not found" and "wrong password" take the same
 // time — prevents email enumeration via response timing.
@@ -33,8 +35,9 @@ function passwordVersion(passwordHash: string): string {
 }
 
 function toPublicUser(user: User) {
-  const { passwordHash: _ph, ...rest } = user;
+  const { passwordHash: _ph, mfaSecretEncrypted: _mfaSecret, ...rest } = user;
   void _ph;
+  void _mfaSecret;
   return rest;
 }
 
@@ -42,18 +45,21 @@ export const authService = {
   async register(input: RegisterInput, context: SessionRequestContext) {
     const existing = await prisma.user.findUnique({ where: { email: input.email } });
     if (existing) throw ApiError.conflict('An account with this email already exists');
+    await passwordSecurityService.assertAllowed(null, input.password);
 
     const isFirstUser = (await prisma.user.count()) === 0;
+    const passwordHash = await hashPassword(input.password);
     const user = await prisma.user.create({
       data: {
         email: input.email,
-        passwordHash: await hashPassword(input.password),
+        passwordHash,
         firstName: input.firstName,
         lastName: input.lastName,
         // First registered account bootstraps as ADMIN; everyone else is EMPLOYEE.
         role: isFirstUser ? 'ADMIN' : 'EMPLOYEE',
       },
     });
+    await passwordSecurityService.record(user.id, passwordHash);
     const tokens = await sessionSecurityService.issueSession(user, context);
     return { user: toPublicUser(user), ...tokens };
   },
@@ -70,7 +76,31 @@ export const authService = {
       throw ApiError.unauthorized('Invalid credentials');
     }
     recordLoginSuccess(input.email);
-    const tokens = await sessionSecurityService.issueSession(user, context);
+    const risk = await sessionSecurityService.assessLoginRisk(user.id, context);
+    if (user.mfaEnabled) {
+      const trustedDevice = await mfaService.resolveTrustedDevice(user.id, context, risk);
+      if (!trustedDevice) return mfaService.createLoginChallenge(user, context, risk);
+      const tokens = await sessionSecurityService.issueSession(user, context, {
+        risk,
+        trustedDeviceId: trustedDevice.id,
+      });
+      logger.info(
+        { event: 'auth.login_succeeded', userId: user.id, sessionId: tokens.sessionId, trustedDevice: true },
+        'Login succeeded with a trusted device',
+      );
+      return { user: toPublicUser(user), ...tokens };
+    }
+    if (risk.level === 'HIGH') {
+      logger.warn(
+        { event: 'security.login_blocked_high_risk', userId: user.id, reasons: risk.reasons },
+        'High-risk login blocked because the account has no MFA factor',
+      );
+      throw new ApiError(403, 'This login was blocked because it appears suspicious. Use a known device or contact an administrator.', {
+        code: 'HIGH_RISK_LOGIN_BLOCKED',
+        risk: { level: risk.level, reasons: risk.reasons },
+      });
+    }
+    const tokens = await sessionSecurityService.issueSession(user, context, { risk });
     logger.info(
       { event: 'auth.login_succeeded', userId: user.id, sessionId: tokens.sessionId },
       'Login succeeded',
@@ -117,10 +147,14 @@ export const authService = {
       throw ApiError.badRequest('Reset link is invalid or has expired');
     }
 
+    await passwordSecurityService.assertAllowed(user.id, password);
+    const passwordHash = await hashPassword(password);
+
     await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash: await hashPassword(password) },
+      data: { passwordHash },
     });
+    await passwordSecurityService.record(user.id, passwordHash);
     // Invalidate every existing session after a reset.
     await sessionSecurityService.revokeAll(user.id);
     logger.info({ event: 'auth.password_reset_completed', userId: user.id, ip }, 'Password reset completed');
@@ -204,6 +238,21 @@ export const authService = {
       { event: 'auth.logout_all_sessions', userId: stored.userId, revokedSessions },
       'Logout invalidated active refresh tokens',
     );
+  },
+
+  async verifyMfaLogin(
+    challengeToken: string,
+    code: string,
+    rememberDevice: boolean,
+    context: SessionRequestContext,
+  ) {
+    const result = await mfaService.completeLogin(challengeToken, code, rememberDevice, context);
+    const { user, ...tokens } = result;
+    logger.info(
+      { event: 'auth.login_succeeded', userId: user.id, sessionId: tokens.sessionId, mfa: true },
+      'Login succeeded with MFA',
+    );
+    return { user: toPublicUser(user), ...tokens };
   },
 
   async me(userId: string) {

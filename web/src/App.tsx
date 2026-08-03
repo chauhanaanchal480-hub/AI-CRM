@@ -6,6 +6,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ProtectedRoute, PublicOnlyRoute } from '@/routes/ProtectedRoute';
 import { FullPageSpinner } from '@/components/ui/Spinner';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { StepUpDialog } from '@/components/auth/StepUpDialog';
 
 const LandingPage = lazy(() => import('@/pages/LandingPage'));
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
@@ -34,6 +35,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <ErrorBoundary>
+        <StepUpDialog />
         <Suspense fallback={<FullPageSpinner label="Loading…" />}>
           <Routes>
             {/* Public */}

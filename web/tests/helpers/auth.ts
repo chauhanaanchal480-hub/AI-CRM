@@ -32,7 +32,14 @@ export async function loginViaApi(
   // limiter mid-suite and makes pass counts nondeterministic.
   const cached = tokenCache.get(role);
   if (!opts?.fresh && cached && Date.now() - cached.at < TOKEN_TTL_MS) {
-    return cached.token;
+    const validation = await context.request.get('/api/auth/me', {
+      headers: { Authorization: `Bearer ${cached.token}` },
+    });
+    if (validation.ok()) return cached.token;
+    if (validation.status() !== 401) {
+      throw new Error(`Cached API session validation failed: ${validation.status()} ${await validation.text()}`);
+    }
+    tokenCache.delete(role);
   }
   const user = USERS[role];
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -41,6 +48,7 @@ export async function loginViaApi(
     });
     if (res.ok()) {
       const json = (await res.json()) as { data: { accessToken: string } };
+      tokenCache.set(role, { token: json.data.accessToken, at: Date.now() });
       return json.data.accessToken;
     }
     if (res.status() === 409) {

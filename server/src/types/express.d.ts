@@ -5,6 +5,11 @@ declare global {
   namespace Express {
     interface Request {
       user?: AccessTokenPayload;
+      requestId: string;
+      rawBody?: Buffer;
+      multipartBodyParsed?: boolean;
+      apiClientId?: string;
+      apiVersion?: string;
     }
   }
 }

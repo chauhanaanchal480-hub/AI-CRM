@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { api, setAccessToken } from '@/lib/api';
-import type { User, AuthResponse } from '@/types';
+import type { User, AuthResponse, MfaChallengeResponse } from '@/types';
 
 interface AuthState {
   user: User | null;
   status: 'idle' | 'loading' | 'authenticated' | 'unauthenticated';
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<MfaChallengeResponse | null>;
+  verifyMfa: (challengeToken: string, code: string, rememberDevice: boolean) => Promise<void>;
   register: (input: { email: string; password: string; firstName: string; lastName: string }) => Promise<void>;
   logout: () => Promise<void>;
   bootstrap: () => Promise<void>;
@@ -17,7 +18,19 @@ export const useAuthStore = create<AuthState>((set) => ({
   status: 'idle',
 
   login: async (email, password) => {
-    const res = await api.post<{ data: AuthResponse }>('/auth/login', { email, password });
+    const res = await api.post<{ data: AuthResponse | MfaChallengeResponse }>('/auth/login', { email, password });
+    if ('mfaRequired' in res.data.data) return res.data.data;
+    setAccessToken(res.data.data.accessToken);
+    set({ user: res.data.data.user, status: 'authenticated' });
+    return null;
+  },
+
+  verifyMfa: async (challengeToken, code, rememberDevice) => {
+    const res = await api.post<{ data: AuthResponse }>('/auth/mfa/verify', {
+      challengeToken,
+      code,
+      rememberDevice,
+    });
     setAccessToken(res.data.data.accessToken);
     set({ user: res.data.data.user, status: 'authenticated' });
   },

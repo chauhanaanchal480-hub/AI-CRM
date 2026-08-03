@@ -11,6 +11,8 @@ import { ApiError } from '../../utils/ApiError.js';
 import { hashPassword, verifyPassword } from '../../utils/password.js';
 import { passwordSchema } from '../auth/auth.validation.js';
 import { logger } from '../../lib/logger.js';
+import { requireStepUp } from '../../middleware/requireStepUp.js';
+import { passwordSecurityService } from '../auth/password-security.service.js';
 
 const publicUser = {
   id: true, email: true, firstName: true, lastName: true, role: true,
@@ -64,6 +66,7 @@ usersRouter.patch(
 // Change own password.
 usersRouter.post(
   '/me/password',
+  requireStepUp,
   validate({ body: changePasswordSchema }),
   asyncHandler(async (req: Request, res: Response) => {
     const { currentPassword, newPassword } = req.body as z.infer<typeof changePasswordSchema>;
@@ -72,7 +75,10 @@ usersRouter.post(
       logger.warn({ event: 'auth.password_change_failed', userId: req.user!.sub }, 'Password change rejected: wrong current password');
       throw ApiError.badRequest('Current password is incorrect');
     }
-    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(newPassword) } });
+    await passwordSecurityService.assertAllowed(user.id, newPassword);
+    const passwordHash = await hashPassword(newPassword);
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    await passwordSecurityService.record(user.id, passwordHash);
     // Revoke refresh tokens so other sessions must re-authenticate.
     await prisma.refreshToken.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
     logger.info({ event: 'auth.password_changed', userId: user.id }, 'Password changed');
@@ -84,6 +90,7 @@ usersRouter.post(
 usersRouter.patch(
   '/:id',
   authorize('ADMIN'),
+  requireStepUp,
   validate({ params: idParam, body: updateRoleSchema }),
   asyncHandler(async (req: Request, res: Response) => {
     // An admin cannot demote or deactivate their own account.

@@ -100,12 +100,19 @@ model User {
   currentLoginAt    DateTime?
   previousLoginAt   DateTime?
   lastFailedLoginAt DateTime?
+  mfaEnabled        Boolean   @default(false)
+  mfaSecretEncrypted String?
+  mfaEnabledAt      DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
   refreshTokens  RefreshToken[]
   sessions       Session[]
   loginHistory   LoginHistory[]
+  passwordHistory PasswordHistory[]
+  mfaRecoveryCodes MfaRecoveryCode[]
+  mfaChallenges  MfaChallenge[]
+  trustedDevices TrustedDevice[]
   ownedCustomers Customer[]     @relation("CustomerOwner")
   assignedLeads  Lead[]         @relation("LeadAssignee")
   ownedDeals     Deal[]         @relation("DealOwner")
@@ -148,6 +155,12 @@ model Session {
   browser           String
   operatingSystem   String
   deviceType        String
+  riskLevel         String         @default("LOW")
+  riskReasons       Json?
+  mfaVerifiedAt     DateTime?
+  stepUpVerifiedAt  DateTime?
+  trustedDeviceId   String?
+  trustedDevice     TrustedDevice? @relation(fields: [trustedDeviceId], references: [id], onDelete: SetNull)
   revokedAt         DateTime?
   refreshTokens     RefreshToken[]
   loginHistory      LoginHistory[]
@@ -155,6 +168,67 @@ model Session {
   @@index([userId, revokedAt])
   @@index([expiresAt])
   @@index([absoluteExpiresAt])
+  @@index([deviceFingerprint])
+  @@index([trustedDeviceId])
+}
+
+model PasswordHistory {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model MfaRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String    @unique
+  createdAt DateTime  @default(now())
+  usedAt    DateTime?
+
+  @@index([userId, usedAt])
+}
+
+model MfaChallenge {
+  id                String    @id @default(uuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash         String    @unique
+  deviceFingerprint String
+  ip                String
+  riskLevel         String
+  riskReasons       Json?
+  expiresAt         DateTime
+  consumedAt        DateTime?
+  attemptCount      Int       @default(0)
+  lastAttemptAt     DateTime?
+  lockedAt          DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt, consumedAt])
+  @@index([lockedAt, expiresAt])
+}
+
+model TrustedDevice {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash         String    @unique
+  deviceFingerprint String
+  label             String
+  expiresAt         DateTime
+  lastUsedAt        DateTime  @default(now())
+  revokedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  sessions          Session[]
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
   @@index([deviceFingerprint])
 }
 
@@ -177,6 +251,59 @@ model LoginHistory {
   @@index([userId, timestamp])
   @@index([emailHash, timestamp])
   @@index([sessionId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  sessionId  String?
+  requestId  String
+  ip         String
+  userAgent  String
+  timestamp  DateTime @default(now())
+  resource   String
+  action     String
+  targetId   String?
+  success    Boolean
+  statusCode Int
+  metadata   Json?
+
+  @@index([timestamp])
+  @@index([userId, timestamp])
+  @@index([sessionId, timestamp])
+  @@index([requestId])
+  @@index([resource, action, timestamp])
+  @@index([success, timestamp])
+  @@index([targetId])
+}
+
+model ApiRequestNonce {
+  id          String   @id @default(cuid())
+  keyId       String
+  nonce       String
+  requestHash String
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@unique([keyId, nonce])
+  @@index([expiresAt])
+}
+
+model ApiIdempotencyRecord {
+  id           String   @id @default(cuid())
+  scopeHash    String
+  key          String
+  requestHash  String
+  state        String   @default("PENDING")
+  statusCode   Int?
+  responseBody Json?
+  createdAt    DateTime @default(now())
+  completedAt  DateTime?
+  expiresAt    DateTime
+
+  @@unique([scopeHash, key])
+  @@index([expiresAt])
+  @@index([state, createdAt])
 }
 
 model Customer {

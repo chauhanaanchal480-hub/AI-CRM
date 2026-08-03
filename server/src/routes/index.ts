@@ -13,13 +13,14 @@ import { uploadsRouter } from '../modules/uploads/uploads.routes.js';
 import { analyticsRouter } from '../modules/analytics/analytics.routes.js';
 import { aiRouter } from '../modules/ai/ai.routes.js';
 import { exportRouter } from '../modules/export/export.routes.js';
+import { auditRouter } from '../modules/audit/audit.routes.js';
 
 export const apiRouter = Router();
 
 apiRouter.get('/', (_req, res) =>
   res.json({
     success: true,
-    data: { name: 'AI-CRM API', version: '1.0.0', docs: '/api/docs (see docs/API.md)' },
+    data: { name: 'AI-CRM API', version: 'v1', docs: '/api/v1/openapi.json' },
   }),
 );
 
@@ -37,3 +38,4 @@ apiRouter.use('/uploads', uploadsRouter);
 apiRouter.use('/analytics', analyticsRouter);
 apiRouter.use('/ai', aiRouter);
 apiRouter.use('/export', exportRouter);
+apiRouter.use('/audit', auditRouter);

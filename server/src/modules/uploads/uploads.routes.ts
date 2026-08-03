@@ -13,6 +13,9 @@ import { sendSuccess } from '../../utils/apiResponse.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { logActivity } from '../../services/activity.service.js';
 import { env } from '../../config/env.js';
+import { logger } from '../../lib/logger.js';
+import { uploadRateLimiter } from '../../middleware/rateLimit.js';
+import { hmacMultipartRequestSigning } from '../../middleware/hmacRequestSigning.js';
 
 const uploadDir = path.resolve(env.UPLOAD_DIR);
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -44,6 +47,46 @@ const BLOCKED_EXT = new Set([
   '.ps1', '.vbs', '.js', '.mjs', '.jar', '.php', '.py', '.rb', '.pl',
   '.cgi', '.htaccess', '.svg', '.html', '.htm',
 ]);
+
+const KNOWN_EXTENSIONS = new Set([
+  ...BLOCKED_EXT,
+  ...Object.values(MIME_EXTENSIONS).flatMap((extensions) => [...extensions]),
+]);
+
+function sanitizeFilename(filename: string): string {
+  const basename = path.basename(filename.replace(/\\/g, '/')).normalize('NFKC');
+  const ext = path.extname(basename).toLowerCase();
+  const stem = basename.slice(0, basename.length - ext.length)
+    .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, '_')
+    .replace(/\s+/g, ' ')
+    .replace(/^\.+|[. ]+$/g, '')
+    .trim();
+  const maxStemBytes = 255 - Buffer.byteLength(ext, 'utf8');
+  let safeStem = '';
+  for (const character of stem || 'upload') {
+    if (Buffer.byteLength(safeStem + character, 'utf8') > maxStemBytes) break;
+    safeStem += character;
+  }
+  return `${safeStem || 'upload'}${ext}`;
+}
+
+function hasDoubleExtension(filename: string): boolean {
+  const parts = path.basename(filename.replace(/\\/g, '/')).toLowerCase().split('.');
+  return parts.length > 2 && parts.slice(1, -1).some((part) => KNOWN_EXTENSIONS.has(`.${part}`));
+}
+
+function logBlockedUpload(req: Request, reason: string, file?: Pick<Express.Multer.File, 'originalname' | 'mimetype'>) {
+  logger.warn(
+    {
+      event: 'security.upload_blocked',
+      reason,
+      userId: req.user?.sub,
+      extension: file ? path.extname(file.originalname).toLowerCase() : undefined,
+      claimedMimeType: file?.mimetype,
+    },
+    'Blocked file upload attempt',
+  );
+}
 
 const resourceId = z.string().cuid('Invalid id');
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -155,34 +198,56 @@ async function verifyMagicBytes(filePath: string, mimetype: string): Promise<boo
 const upload = multer({
   storage,
   limits: { fileSize: env.MAX_UPLOAD_MB * 1024 * 1024, files: 1 },
-  fileFilter: (_req, file, cb) => {
+  fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (BLOCKED_EXT.has(ext)) return cb(new ApiError(400, 'This file type is not allowed'));
-    if (Buffer.byteLength(file.originalname, 'utf8') > 255) return cb(new ApiError(400, 'Filename is too long'));
+    const reject = (reason: string, message: string) => {
+      logBlockedUpload(req, reason, file);
+      return cb(new ApiError(400, message));
+    };
+    if (hasDoubleExtension(file.originalname)) return reject('double_extension', 'Double file extensions are not allowed');
+    if (BLOCKED_EXT.has(ext)) return reject('blocked_extension', 'This file type is not allowed');
+    if (Buffer.byteLength(file.originalname, 'utf8') > 255) return reject('filename_too_long', 'Filename is too long');
     const extensions = MIME_EXTENSIONS[file.mimetype];
-    if (!extensions) return cb(new ApiError(400, 'Unsupported file type'));
-    if (!extensions.has(ext)) return cb(new ApiError(400, 'File extension does not match its declared type'));
+    if (!extensions) return reject('unsupported_mime_type', 'Unsupported file type');
+    if (!extensions.has(ext)) return reject('mime_extension_mismatch', 'File extension does not match its declared type');
+    file.originalname = sanitizeFilename(file.originalname);
     return cb(null, true);
   },
 });
+
+function acceptSingleUpload(req: Request, res: Response, next: (error?: unknown) => void) {
+  upload.single('file')(req, res, (error: unknown) => {
+    if (!(error instanceof multer.MulterError)) return next(error);
+    const isOversized = error.code === 'LIMIT_FILE_SIZE';
+    logBlockedUpload(req, isOversized ? 'file_too_large' : error.code.toLowerCase(), req.file);
+    return next(new ApiError(isOversized ? 413 : 400, isOversized ? 'File exceeds the maximum allowed size' : 'Invalid file upload'));
+  });
+}
 
 export const uploadsRouter = Router();
 uploadsRouter.use(authenticate);
 
 uploadsRouter.post(
   '/',
-  upload.single('file'),
+  uploadRateLimiter,
+  acceptSingleUpload,
+  hmacMultipartRequestSigning,
   asyncHandler(async (req: Request, res: Response) => {
-    if (!req.file) throw ApiError.badRequest('No file provided (field name must be "file")');
+    if (!req.file) {
+      logBlockedUpload(req, 'file_missing');
+      throw ApiError.badRequest('No file provided (field name must be "file")');
+    }
     let contentIsValid = false;
     try {
       contentIsValid = await verifyMagicBytes(req.file.path, req.file.mimetype);
     } catch {
       await fs.promises.unlink(req.file.path).catch(() => undefined);
+      logBlockedUpload(req, 'content_verification_failed', req.file);
       throw ApiError.badRequest('Unable to verify file content');
     }
     if (!contentIsValid) {
       await fs.promises.unlink(req.file.path).catch(() => undefined);
+      logBlockedUpload(req, 'content_type_mismatch', req.file);
       throw ApiError.badRequest('File content does not match its declared type');
     }
     const { customerId, dealId } = req.body as { customerId?: string; dealId?: string };

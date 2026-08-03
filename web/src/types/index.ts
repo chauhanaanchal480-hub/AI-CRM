@@ -21,6 +21,8 @@ export interface User {
   title?: string | null;
   phone?: string | null;
   isActive: boolean;
+  mfaEnabled?: boolean;
+  mfaEnabledAt?: string | null;
   createdAt: string;
 }
 
@@ -251,4 +253,11 @@ export interface AuthResponse {
   user: User;
   accessToken: string;
   refreshToken: string;
+}
+
+export interface MfaChallengeResponse {
+  mfaRequired: true;
+  challengeToken: string;
+  methods: readonly ['totp', 'recovery_code'];
+  risk: { level: 'LOW' | 'MEDIUM' | 'HIGH'; reasons: string[] };
 }

@@ -15,6 +15,26 @@ export interface SessionRequestContext {
   ip: string;
   userAgent: string;
   deviceId: string;
+  trustedDeviceToken?: string;
+  acceptLanguage?: string;
+  clientUa?: string;
+  clientPlatform?: string;
+  clientMobile?: string;
+}
+
+export type LoginRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+
+export interface LoginRiskAssessment {
+  level: LoginRiskLevel;
+  reasons: string[];
+  knownDevice: boolean;
+  knownIp: boolean;
+}
+
+interface IssueSessionOptions {
+  risk?: LoginRiskAssessment;
+  mfaVerified?: boolean;
+  trustedDeviceId?: string;
 }
 
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
@@ -60,20 +80,34 @@ function deviceTypeFrom(userAgent: string) {
   return 'Desktop';
 }
 
-function describeContext(context: SessionRequestContext) {
+export function describeSessionContext(context: SessionRequestContext) {
   const ip = bounded(context.ip, 64, 'unknown');
   const userAgent = bounded(context.userAgent, 512, 'unknown');
   const deviceId = bounded(context.deviceId, 128, 'unknown');
+  const browser = browserFrom(userAgent);
+  const operatingSystem = operatingSystemFrom(userAgent);
+  const deviceType = deviceTypeFrom(userAgent);
+  const fingerprintSignals = {
+    version: 2,
+    deviceId,
+    browser: browser.split(' ', 1)[0],
+    operatingSystem: operatingSystem.split(' ', 1)[0],
+    deviceType,
+    language: bounded(context.acceptLanguage, 64, 'unknown').split(',', 1)[0].toLowerCase(),
+    clientUa: bounded(context.clientUa, 160, 'unknown').toLowerCase(),
+    clientPlatform: bounded(context.clientPlatform, 64, 'unknown').toLowerCase(),
+    clientMobile: bounded(context.clientMobile, 16, 'unknown').toLowerCase(),
+  };
   return {
     ip,
     userAgent,
     deviceFingerprint: crypto
       .createHmac('sha256', env.JWT_ACCESS_SECRET)
-      .update(deviceId)
+      .update(JSON.stringify(fingerprintSignals))
       .digest('hex'),
-    browser: browserFrom(userAgent),
-    operatingSystem: operatingSystemFrom(userAgent),
-    deviceType: deviceTypeFrom(userAgent),
+    browser,
+    operatingSystem,
+    deviceType,
   };
 }
 
@@ -139,11 +173,52 @@ async function revokeOwnedSessions(userId: string, sessionIds: string[], now = n
 }
 
 export const sessionSecurityService = {
-  async issueSession(user: User, context: SessionRequestContext) {
+  async assessLoginRisk(userId: string, context: SessionRequestContext): Promise<LoginRiskAssessment> {
+    const now = new Date();
+    const device = describeSessionContext(context);
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+    const [previousSuccess, knownDevice, knownIp, recentFailures, recentSuccesses] = await Promise.all([
+      prisma.loginHistory.findFirst({
+        where: { userId, success: true },
+        orderBy: { timestamp: 'desc' },
+        select: { timestamp: true },
+      }),
+      prisma.session.findFirst({
+        where: { userId, deviceFingerprint: device.deviceFingerprint },
+        select: { sessionId: true },
+      }),
+      prisma.loginHistory.findFirst({
+        where: { userId, success: true, ip: device.ip },
+        select: { id: true },
+      }),
+      prisma.loginHistory.count({
+        where: { userId, success: false, timestamp: { gte: oneHourAgo } },
+      }),
+      prisma.loginHistory.count({
+        where: { userId, success: true, timestamp: { gte: tenMinutesAgo } },
+      }),
+    ]);
+
+    if (!previousSuccess) return { level: 'LOW', reasons: [], knownDevice: false, knownIp: false };
+    const reasons: string[] = [];
+    if (!knownDevice) reasons.push('NEW_DEVICE');
+    if (!knownIp) reasons.push('NEW_IP');
+    if (recentFailures >= 3) reasons.push('RECENT_FAILED_LOGINS');
+    if (recentSuccesses >= 5) reasons.push('HIGH_LOGIN_VELOCITY');
+    const level: LoginRiskLevel = reasons.includes('RECENT_FAILED_LOGINS')
+      || (reasons.includes('HIGH_LOGIN_VELOCITY') && !knownIp)
+      || (reasons.includes('NEW_DEVICE') && reasons.includes('NEW_IP'))
+      ? 'HIGH'
+      : reasons.length > 0 ? 'MEDIUM' : 'LOW';
+    return { level, reasons, knownDevice: Boolean(knownDevice), knownIp: Boolean(knownIp) };
+  },
+
+  async issueSession(user: User, context: SessionRequestContext, options: IssueSessionOptions = {}) {
     await cleanupExpiredSessions();
     const now = new Date();
     const sessionId = crypto.randomUUID();
-    const device = describeContext(context);
+    const device = describeSessionContext(context);
     const { expiresAt, absoluteExpiresAt } = sessionDates(now);
     const refreshExpiresAt = new Date(
       Math.min(ttlToDate(env.JWT_REFRESH_TTL).getTime(), absoluteExpiresAt.getTime()),
@@ -155,25 +230,10 @@ export const sessionSecurityService = {
       sid: sessionId,
     });
     const refreshToken = signRefreshToken(user.id, sessionId);
-    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
-
-    const [previousSuccess, knownDevice, knownIp, activeSessionCount, recentSuccessCount] = await Promise.all([
-      prisma.loginHistory.findFirst({ where: { userId: user.id, success: true }, select: { timestamp: true } }),
-      prisma.session.findFirst({
-        where: { userId: user.id, deviceFingerprint: device.deviceFingerprint },
-        select: { sessionId: true },
-      }),
-      prisma.loginHistory.findFirst({
-        where: { userId: user.id, success: true, ip: device.ip },
-        select: { id: true },
-      }),
-      prisma.session.count({
-        where: { userId: user.id, revokedAt: null, expiresAt: { gt: now }, absoluteExpiresAt: { gt: now } },
-      }),
-      prisma.loginHistory.count({
-        where: { userId: user.id, success: true, timestamp: { gte: tenMinutesAgo } },
-      }),
-    ]);
+    const risk = options.risk ?? await this.assessLoginRisk(user.id, context);
+    const activeSessionCount = await prisma.session.count({
+      where: { userId: user.id, revokedAt: null, expiresAt: { gt: now }, absoluteExpiresAt: { gt: now } },
+    });
 
     await prisma.$transaction([
       prisma.session.create({
@@ -184,6 +244,11 @@ export const sessionSecurityService = {
           expiresAt,
           absoluteExpiresAt,
           lastActivity: now,
+          riskLevel: risk.level,
+          riskReasons: risk.reasons,
+          mfaVerifiedAt: options.mfaVerified ? now : null,
+          stepUpVerifiedAt: now,
+          trustedDeviceId: options.trustedDeviceId,
           ...device,
         },
       }),
@@ -206,10 +271,10 @@ export const sessionSecurityService = {
       }),
     ]);
 
-    if (previousSuccess && !knownDevice) {
+    if (!risk.knownDevice && risk.reasons.includes('NEW_DEVICE')) {
       logger.warn({ event: 'security.login_new_device', userId: user.id, sessionId }, 'Login from a new device');
     }
-    if (previousSuccess && !knownIp) {
+    if (!risk.knownIp && risk.reasons.includes('NEW_IP')) {
       logger.warn({ event: 'security.login_new_ip', userId: user.id, sessionId }, 'Login from a new IP');
     }
     if (activeSessionCount > 0) {
@@ -218,17 +283,37 @@ export const sessionSecurityService = {
         'Multiple concurrent sessions detected',
       );
     }
-    if (recentSuccessCount >= 4 || (previousSuccess?.timestamp && !knownDevice && !knownIp
-      && now.getTime() - previousSuccess.timestamp.getTime() < 5 * 60 * 1000)) {
-      logger.warn({ event: 'security.login_abnormal', userId: user.id, sessionId }, 'Abnormal login behaviour detected');
+    if (risk.level === 'HIGH') {
+      logger.warn(
+        { event: 'security.login_high_risk', userId: user.id, sessionId, reasons: risk.reasons },
+        'High-risk login detected',
+      );
     }
 
-    return { accessToken, refreshToken, sessionId };
+    return { accessToken, refreshToken, sessionId, risk: { level: risk.level, reasons: risk.reasons } };
+  },
+
+  async stepUpIsCurrent(userId: string, sessionId: string, maxAgeMs: number) {
+    const session = await prisma.session.findFirst({
+      where: { userId, sessionId, revokedAt: null },
+      select: { stepUpVerifiedAt: true },
+    });
+    return Boolean(session?.stepUpVerifiedAt && Date.now() - session.stepUpVerifiedAt.getTime() <= maxAgeMs);
+  },
+
+  async markStepUp(userId: string, sessionId: string, mfaVerified: boolean) {
+    const now = new Date();
+    const updated = await prisma.session.updateMany({
+      where: { userId, sessionId, revokedAt: null },
+      data: { stepUpVerifiedAt: now, ...(mfaVerified ? { mfaVerifiedAt: now } : {}) },
+    });
+    if (updated.count !== 1) throw ApiError.unauthorized('Session expired or revoked');
+    return now;
   },
 
   async recordFailedLogin(user: User | null, email: string, context: SessionRequestContext) {
     const now = new Date();
-    const device = describeContext(context);
+    const device = describeSessionContext(context);
     await prisma.$transaction([
       prisma.loginHistory.create({
         data: {
@@ -272,7 +357,7 @@ export const sessionSecurityService = {
     const now = new Date();
     const session = await prisma.session.findUnique({ where: { sessionId } });
     if (!session || session.userId !== userId || !isActive(session, now)) return null;
-    const device = describeContext(context);
+    const device = describeSessionContext(context);
     if (session.ip !== device.ip || session.deviceFingerprint !== device.deviceFingerprint) {
       logger.warn(
         { event: 'security.session_context_changed', userId, sessionId },
@@ -311,6 +396,10 @@ export const sessionSecurityService = {
       browser: session.browser,
       operatingSystem: session.operatingSystem,
       deviceType: session.deviceType,
+      riskLevel: session.riskLevel,
+      riskReasons: session.riskReasons,
+      mfaVerifiedAt: session.mfaVerifiedAt,
+      trusted: Boolean(session.trustedDeviceId),
       location: null,
     }));
   },

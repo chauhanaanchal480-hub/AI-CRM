@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { motion } from 'framer-motion';
-import { Sparkles, Mail, Lock, ArrowRight, User } from 'lucide-react';
+import { Sparkles, Mail, Lock, ArrowRight, User, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useAuthStore } from '@/store/authStore';
@@ -28,6 +28,12 @@ const registerSchema = z.object({
 type LoginForm = z.infer<typeof loginSchema>;
 type RegisterForm = z.infer<typeof registerSchema>;
 
+const mfaSchema = z.object({
+  code: z.string().trim().min(6, 'Enter your authentication or recovery code').max(32),
+  rememberDevice: z.boolean().default(false),
+});
+type MfaForm = z.infer<typeof mfaSchema>;
+
 const demoAccounts = [
   { label: 'Admin', email: 'admin@crm.dev' },
   { label: 'Manager', email: 'manager@crm.dev' },
@@ -37,10 +43,12 @@ const demoAccounts = [
 export default function LoginPage() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [serverError, setServerError] = useState('');
+  const [mfaChallenge, setMfaChallenge] = useState<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
   const login = useAuthStore((s) => s.login);
   const register = useAuthStore((s) => s.register);
+  const verifyMfa = useAuthStore((s) => s.verifyMfa);
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/app/dashboard';
 
   const loginForm = useForm<LoginForm>({
@@ -48,14 +56,33 @@ export default function LoginPage() {
     defaultValues: { email: 'admin@crm.dev', password: 'Password123!' },
   });
   const registerForm = useForm<RegisterForm>({ resolver: zodResolver(registerSchema) });
+  const mfaForm = useForm<MfaForm>({
+    resolver: zodResolver(mfaSchema),
+    defaultValues: { code: '', rememberDevice: false },
+  });
 
   const submitLogin = loginForm.handleSubmit(async (values) => {
     setServerError('');
     try {
-      await login(values.email, values.password);
+      const challenge = await login(values.email, values.password);
+      if (challenge) {
+        setMfaChallenge(challenge.challengeToken);
+        return;
+      }
       navigate(from, { replace: true });
     } catch (e) {
       setServerError(getApiErrorMessage(e, 'Login failed'));
+    }
+  });
+
+  const submitMfa = mfaForm.handleSubmit(async (values) => {
+    if (!mfaChallenge) return;
+    setServerError('');
+    try {
+      await verifyMfa(mfaChallenge, values.code, values.rememberDevice);
+      navigate(from, { replace: true });
+    } catch (e) {
+      setServerError(getApiErrorMessage(e, 'Authentication code was rejected'));
     }
   });
 
@@ -88,10 +115,12 @@ export default function LoginPage() {
           </Link>
           <div>
             <h1 className="text-2xl font-bold text-foreground">
-              {mode === 'login' ? 'Welcome back' : 'Create your account'}
+              {mfaChallenge ? 'Verify your identity' : mode === 'login' ? 'Welcome back' : 'Create your account'}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {mode === 'login' ? 'Sign in to your AI-CRM workspace' : 'Start managing customers in minutes'}
+              {mfaChallenge
+                ? 'Enter the code from your authenticator or a recovery code'
+                : mode === 'login' ? 'Sign in to your AI-CRM workspace' : 'Start managing customers in minutes'}
             </p>
           </div>
         </div>
@@ -103,7 +132,32 @@ export default function LoginPage() {
             </div>
           )}
 
-          {mode === 'login' ? (
+          {mfaChallenge ? (
+            <form onSubmit={submitMfa} noValidate className="space-y-4">
+              <Input
+                label="Authentication code"
+                autoComplete="one-time-code"
+                icon={<ShieldCheck className="h-4 w-4" />}
+                placeholder="123456 or recovery code"
+                error={mfaForm.formState.errors.code?.message}
+                {...mfaForm.register('code')}
+              />
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input type="checkbox" className="rounded border-border" {...mfaForm.register('rememberDevice')} />
+                Remember this device for 30 days
+              </label>
+              <Button type="submit" className="w-full" loading={mfaForm.formState.isSubmitting}>
+                Verify and sign in <ArrowRight className="h-4 w-4" />
+              </Button>
+              <button
+                type="button"
+                onClick={() => { setMfaChallenge(null); mfaForm.reset(); setServerError(''); }}
+                className="w-full text-sm font-medium text-muted-foreground hover:text-foreground"
+              >
+                Back to sign in
+              </button>
+            </form>
+          ) : mode === 'login' ? (
             <form onSubmit={submitLogin} noValidate className="space-y-4">
               <Input
                 label="Email"
@@ -139,7 +193,7 @@ export default function LoginPage() {
             </form>
           )}
 
-          {mode === 'login' && (
+          {mode === 'login' && !mfaChallenge && (
             <div className="mt-5 border-t border-border pt-4">
               <p className="mb-2 text-center text-xs text-muted-foreground">Quick demo login</p>
               <div className="flex justify-center gap-2">
@@ -157,7 +211,7 @@ export default function LoginPage() {
             </div>
           )}
 
-          <p className="mt-5 text-center text-sm text-muted-foreground">
+          {!mfaChallenge && <p className="mt-5 text-center text-sm text-muted-foreground">
             {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
             <button
               onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setServerError(''); }}
@@ -165,7 +219,7 @@ export default function LoginPage() {
             >
               {mode === 'login' ? 'Sign up' : 'Sign in'}
             </button>
-          </p>
+          </p>}
         </div>
       </motion.div>
     </div>

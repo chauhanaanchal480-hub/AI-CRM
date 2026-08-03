@@ -24,6 +24,27 @@ export const loginSchema = z.object({
   password: z.string().min(1).max(128),
 });
 
+export const mfaCodeSchema = z.string().trim().min(6).max(32);
+
+export const mfaVerifySchema = z.object({
+  challengeToken: z.string().min(32).max(256),
+  code: mfaCodeSchema,
+  rememberDevice: z.boolean().default(false),
+});
+
+export const mfaCodeBodySchema = z.object({ code: mfaCodeSchema });
+
+export const stepUpSchema = z.object({
+  password: z.string().min(1).max(128).optional(),
+  code: mfaCodeSchema.optional(),
+}).refine((value) => Boolean(value.password || value.code), {
+  message: 'Password or authentication code is required',
+});
+
+export const trustedDeviceIdParam = z.object({
+  trustedDeviceId: z.string().cuid('Invalid trusted device id'),
+});
+
 export const refreshSchema = z.object({
   refreshToken: z.string().min(1).max(4096).optional(),
 }).default({});

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { ApiError } from '../utils/ApiError.js';
 import { logger } from '../lib/logger.js';
 import { isProd } from '../config/env.js';
+import { maskSecretText, maskSensitiveValue } from '../security/secrets.js';
 
 /** 404 handler for unmatched routes. */
 export function notFoundHandler(req: Request, _res: Response, next: NextFunction) {
@@ -16,7 +17,10 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   if (err instanceof ApiError) {
     return res.status(err.statusCode).json({
       success: false,
-      error: { message: err.message, ...(err.details ? { details: err.details } : {}) },
+      error: {
+        message: maskSecretText(err.message),
+        ...(err.details ? { details: maskSensitiveValue(err.details) } : {}),
+      },
     });
   }
 
@@ -55,7 +59,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     return res.status(400).json({ success: false, error: { message: 'Invalid request' } });
   }
 
-  const message = err instanceof Error ? err.message : 'Internal server error';
+  const message = err instanceof Error ? maskSecretText(err.message) : 'Internal server error';
   logger.error(
     {
       event: 'request.unhandled_error',

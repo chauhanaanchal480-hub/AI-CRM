@@ -3,13 +3,30 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
-import rateLimit from 'express-rate-limit';
 import path from 'node:path';
 import { env, isProd } from './config/env.js';
 import { apiRouter } from './routes/index.js';
 import { notFoundHandler, errorHandler } from './middleware/errorHandler.js';
 import { sendSuccess } from './utils/apiResponse.js';
 import { logger } from './lib/logger.js';
+import { requestIdMiddleware } from './middleware/requestId.js';
+import { auditTrailMiddleware } from './middleware/auditTrail.js';
+import {
+  globalApiRateLimiter,
+  perIpRateLimiter,
+  perUserRateLimiter,
+} from './middleware/rateLimit.js';
+import { createOriginValidation, normalizeOrigin } from './middleware/originValidation.js';
+import {
+  canonicalApiVersion,
+  legacyApiVersion,
+  rejectUnsupportedApiVersion,
+  secureApiResponse,
+} from './middleware/apiBoundary.js';
+import { hmacRequestSigning } from './middleware/hmacRequestSigning.js';
+import { idempotencyMiddleware } from './middleware/idempotency.js';
+import { apiAbuseDetection } from './middleware/apiAbuseDetection.js';
+import { openApiRouter } from './openapi/openapi.routes.js';
 
 const SQLI_SIGNATURES = [
   { name: 'boolean_tautology', pattern: /['"]\s*or\s+1\s*=\s*1/i },
@@ -35,8 +52,8 @@ function findSqliSignatures(value: unknown) {
 
 const corsOrigins = new Set(
   env.CORS_ORIGIN.split(',')
-    .map((origin) => origin.trim().replace(/\/$/, ''))
-    .filter(Boolean),
+    .map((origin) => normalizeOrigin(origin.trim()))
+    .filter((origin): origin is string => Boolean(origin)),
 );
 
 if (corsOrigins.has('*')) {
@@ -52,6 +69,7 @@ export function createApp() {
   // rate limiting see the real client address.
   if (isProd) app.set('trust proxy', 1);
   app.disable('x-powered-by');
+  app.use(requestIdMiddleware);
 
   app.use(
     helmet({
@@ -80,6 +98,8 @@ export function createApp() {
       },
       hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
       referrerPolicy: { policy: 'no-referrer' },
+      xContentTypeOptions: true,
+      xFrameOptions: { action: 'deny' },
     }),
   );
   app.use((_req, res, next) => {
@@ -89,22 +109,51 @@ export function createApp() {
     );
     next();
   });
+  app.use(createOriginValidation(corsOrigins));
   app.use(
     cors({
       origin: (origin, callback) => {
-        if (!origin || corsOrigins.has(origin.replace(/\/$/, ''))) return callback(null, true);
+        if (!origin || corsOrigins.has(normalizeOrigin(origin) ?? '')) return callback(null, true);
         return callback(null, false);
       },
       credentials: true,
       methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'Idempotency-Key',
+        'X-Request-Id',
+        'X-API-Key-Id',
+        'X-API-Timestamp',
+        'X-API-Nonce',
+        'X-API-Signature',
+      ],
+      exposedHeaders: [
+        'X-Request-Id',
+        'X-API-Version',
+        'X-Signature-Verified',
+        'Idempotency-Key',
+        'Idempotency-Replayed',
+        'Deprecation',
+        'Sunset',
+        'Link',
+      ],
       maxAge: 600,
       optionsSuccessStatus: 204,
     }),
   );
-  app.use(express.json({ limit: '2mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '1mb', parameterLimit: 100 }));
-  app.use(cookieParser());
+  app.use(express.json({
+    limit: '2mb',
+    verify: (req, _res, buffer) => { (req as express.Request).rawBody = Buffer.from(buffer); },
+  }));
+  app.use(express.urlencoded({
+    extended: true,
+    limit: '1mb',
+    parameterLimit: 100,
+    verify: (req, _res, buffer) => { (req as express.Request).rawBody = Buffer.from(buffer); },
+  }));
+  app.use(cookieParser(env.COOKIE_SECRET));
+  app.use(auditTrailMiddleware);
   app.use((req, _res, next) => {
     const matches = [
       { location: 'path', signatures: findSqliSignatures(req.path) },
@@ -142,21 +191,21 @@ export function createApp() {
     }),
   );
 
-  // Global rate limiter (production only — e2e suites exceed it and get 429s)
-  if (isProd) {
-    app.use(
-      rateLimit({
-        windowMs: 15 * 60 * 1000,
-        max: 1000,
-        standardHeaders: true,
-        legacyHeaders: false,
-      }),
-    );
-  }
-
   app.get('/health', (_req, res) => sendSuccess(res, { status: 'ok', uptime: process.uptime() }));
 
-  app.use('/api', apiRouter);
+  const enterpriseApiSecurity = [
+    secureApiResponse,
+    hmacRequestSigning,
+    globalApiRateLimiter,
+    perIpRateLimiter,
+    perUserRateLimiter,
+    apiAbuseDetection,
+    idempotencyMiddleware,
+    openApiRouter,
+  ];
+
+  app.use('/api/v1', canonicalApiVersion, ...enterpriseApiSecurity, apiRouter, notFoundHandler);
+  app.use('/api', rejectUnsupportedApiVersion, legacyApiVersion, ...enterpriseApiSecurity, apiRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

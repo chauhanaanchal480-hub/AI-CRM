@@ -1,6 +1,4 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
-import { isProd } from '../../config/env.js';
 import { authController } from './auth.controller.js';
 import { validate } from '../../middleware/validate.js';
 import { authenticate } from '../../middleware/authenticate.js';
@@ -12,45 +10,51 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   sessionIdParam,
+  mfaVerifySchema,
+  mfaCodeBodySchema,
+  stepUpSchema,
+  trustedDeviceIdParam,
 } from './auth.validation.js';
-
-// Stricter limiter for auth endpoints to blunt brute-force attempts.
-// Relaxed outside production so e2e suites (many logins per run) don't 429.
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: isProd ? 50 : 100000,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, error: { message: 'Too many requests, please try again later' } },
-});
-
-// Password-reset flows get an even tighter budget: they are unauthenticated
-// and each request costs a token signature / DB lookup.
-const resetLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: isProd ? 10 : 100000,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, error: { message: 'Too many requests, please try again later' } },
-});
+import {
+  authRateLimiter,
+  loginRateLimiter,
+  passwordResetRateLimiter,
+} from '../../middleware/rateLimit.js';
+import { requireStepUp } from '../../middleware/requireStepUp.js';
 
 export const authRouter = Router();
 
-authRouter.post('/register', authLimiter, validate({ body: registerSchema }), asyncHandler(authController.register));
-authRouter.post('/login', authLimiter, validate({ body: loginSchema }), asyncHandler(authController.login));
-authRouter.post('/forgot-password', resetLimiter, validate({ body: forgotPasswordSchema }), asyncHandler(authController.forgotPassword));
-authRouter.post('/reset-password', resetLimiter, validate({ body: resetPasswordSchema }), asyncHandler(authController.resetPassword));
-authRouter.post('/refresh', authLimiter, validate({ body: refreshSchema }), asyncHandler(authController.refresh));
-authRouter.post('/logout', authLimiter, validate({ body: refreshSchema }), asyncHandler(authController.logout));
+authRouter.post('/register', authRateLimiter, validate({ body: registerSchema }), asyncHandler(authController.register));
+authRouter.post('/login', loginRateLimiter, validate({ body: loginSchema }), asyncHandler(authController.login));
+authRouter.post('/mfa/verify', loginRateLimiter, validate({ body: mfaVerifySchema }), asyncHandler(authController.verifyMfaLogin));
+authRouter.post('/forgot-password', passwordResetRateLimiter, validate({ body: forgotPasswordSchema }), asyncHandler(authController.forgotPassword));
+authRouter.post('/reset-password', passwordResetRateLimiter, validate({ body: resetPasswordSchema }), asyncHandler(authController.resetPassword));
+authRouter.post('/refresh', authRateLimiter, validate({ body: refreshSchema }), asyncHandler(authController.refresh));
+authRouter.post('/logout', authRateLimiter, validate({ body: refreshSchema }), asyncHandler(authController.logout));
 authRouter.get('/me', authenticate, asyncHandler(authController.me));
 authRouter.get('/sessions', authenticate, asyncHandler(authController.sessions));
 authRouter.get('/login-history', authenticate, asyncHandler(authController.loginHistory));
 authRouter.delete('/sessions/current', authenticate, asyncHandler(authController.logoutCurrent));
-authRouter.post('/sessions/logout-others', authenticate, asyncHandler(authController.logoutOthers));
-authRouter.post('/sessions/logout-all', authenticate, asyncHandler(authController.logoutAll));
+authRouter.post('/sessions/logout-others', authenticate, requireStepUp, asyncHandler(authController.logoutOthers));
+authRouter.post('/sessions/logout-all', authenticate, requireStepUp, asyncHandler(authController.logoutAll));
 authRouter.delete(
   '/sessions/:sessionId',
   authenticate,
+  requireStepUp,
   validate({ params: sessionIdParam }),
   asyncHandler(authController.logoutSelected),
 );
+authRouter.get('/mfa/status', authenticate, asyncHandler(authController.mfaStatus));
+authRouter.post('/mfa/setup', authenticate, requireStepUp, asyncHandler(authController.mfaSetup));
+authRouter.post('/mfa/enable', authenticate, requireStepUp, validate({ body: mfaCodeBodySchema }), asyncHandler(authController.mfaEnable));
+authRouter.post('/mfa/disable', authenticate, requireStepUp, validate({ body: mfaCodeBodySchema }), asyncHandler(authController.mfaDisable));
+authRouter.post('/mfa/recovery-codes', authenticate, requireStepUp, validate({ body: mfaCodeBodySchema }), asyncHandler(authController.recoveryCodes));
+authRouter.get('/trusted-devices', authenticate, asyncHandler(authController.trustedDevices));
+authRouter.delete(
+  '/trusted-devices/:trustedDeviceId',
+  authenticate,
+  requireStepUp,
+  validate({ params: trustedDeviceIdParam }),
+  asyncHandler(authController.revokeTrustedDevice),
+);
+authRouter.post('/step-up', authenticate, validate({ body: stepUpSchema }), asyncHandler(authController.stepUp));

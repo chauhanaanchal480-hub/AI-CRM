@@ -204,7 +204,7 @@ test.describe('Security hardening', () => {
     const res = await request.get('/health');
     const headers = res.headers();
     expect(headers['x-content-type-options']).toBe('nosniff');
-    expect(headers['x-frame-options']).toBeTruthy();
+    expect(headers['x-frame-options']).toBe('DENY');
     const csp = headers['content-security-policy'];
     for (const directive of [
       "default-src 'self'",
@@ -229,6 +229,20 @@ test.describe('Security hardening', () => {
     expect(headers['permissions-policy']).toContain('microphone=()');
     expect(headers['permissions-policy']).toContain('geolocation=()');
     expect(headers['permissions-policy']).toContain('payment=()');
+    expect(headers['x-powered-by']).toBeUndefined();
+  });
+
+  test('Security headers are applied to non-success responses', async ({ request }) => {
+    const res = await request.get('/api/route-that-does-not-exist');
+    expect(res.status()).toBe(404);
+
+    const headers = res.headers();
+    expect(headers['content-security-policy']).toBeTruthy();
+    expect(headers['strict-transport-security']).toBe('max-age=63072000; includeSubDomains; preload');
+    expect(headers['x-frame-options']).toBe('DENY');
+    expect(headers['x-content-type-options']).toBe('nosniff');
+    expect(headers['referrer-policy']).toBe('no-referrer');
+    expect(headers['permissions-policy']).toBeTruthy();
     expect(headers['x-powered-by']).toBeUndefined();
   });
 

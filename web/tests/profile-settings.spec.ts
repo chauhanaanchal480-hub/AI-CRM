@@ -1,5 +1,5 @@
 import { test, expect, toast, uniqueName } from './helpers/fixtures';
-import { USERS } from './helpers/auth';
+import { stubRefresh, USERS } from './helpers/auth';
 
 test.describe('Profile', () => {
   test.beforeEach(async ({ authedPage: page }) => {
@@ -56,21 +56,31 @@ test.describe('Profile', () => {
     await toast(page, /current password is incorrect/i);
   });
 
-  test('Change password and change it back', async ({ authedPage: page, api }) => {
-    const temp = 'TempPassword123!';
+});
 
-    await page.getByLabel(/current password/i).fill(USERS.admin.password);
-    await page.getByLabel(/new password/i).fill(temp);
-    await page.getByRole('button', { name: /update password/i }).click();
-    await toast(page, /password changed/i);
-
-    // Restore original password via API so other tests are unaffected
-    const restore = await api.request.post('/api/users/me/password', {
-      headers: api.authHeaders,
-      data: { currentPassword: temp, newPassword: USERS.admin.password },
-    });
-    expect(restore.ok()).toBeTruthy();
+test('Change password for a disposable account', async ({ page }) => {
+  const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  const email = `profile-password-${suffix}@test.dev`;
+  const initialPassword = 'Regression-Initial-7419!';
+  const changedPassword = 'Regression-Changed-8520!';
+  const registration = await page.request.post('/api/auth/register', {
+    data: {
+      firstName: 'Password',
+      lastName: 'Regression',
+      email,
+      password: initialPassword,
+    },
   });
+  expect(registration.status()).toBe(201);
+  const token = ((await registration.json()) as { data: { accessToken: string } }).data.accessToken;
+  await stubRefresh(page, token);
+
+  await page.goto('/app/profile');
+  await expect(page.getByRole('heading', { name: /my profile/i })).toBeVisible();
+  await page.getByLabel(/current password/i).fill(initialPassword);
+  await page.getByLabel(/new password/i).fill(changedPassword);
+  await page.getByRole('button', { name: /update password/i }).click();
+  await toast(page, /password changed/i);
 });
 
 test.describe('Settings', () => {

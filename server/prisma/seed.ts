@@ -83,6 +83,7 @@ async function main() {
     ['Wayne Enterprises', 'Courtney Henry', 'courtney@wayne.com', 'Gotham', 'USA'],
     ['Cyberdyne', 'Dianne Russell', 'dianne@cyberdyne.ai', 'Sydney', 'Australia'],
     ['Wonka Industries', 'Ralph Edwards', 'ralph@wonka.com', 'Chicago', 'USA'],
+    ['Tyrell Corporation', 'Eldon Tyrell', 'eldon@tyrell.com', 'Los Angeles', 'USA'],
   ];
   const tagPool = ['enterprise', 'smb', 'priority', 'renewal', 'inbound', 'strategic', 'trial'];
   const customers = [];

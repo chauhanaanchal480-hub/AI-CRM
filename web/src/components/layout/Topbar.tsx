@@ -99,7 +99,10 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
         <Dropdown
           align="right"
           trigger={
-            <button className="ml-1 flex items-center gap-2 rounded-xl p-1 transition-colors hover:bg-muted">
+            <button
+              aria-label="Open user menu"
+              className="ml-1 flex items-center gap-2 rounded-xl p-1 transition-colors hover:bg-muted"
+            >
               <Avatar firstName={user?.firstName} lastName={user?.lastName} src={user?.avatarUrl} size="sm" />
             </button>
           }

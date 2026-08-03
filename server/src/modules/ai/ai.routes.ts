@@ -10,6 +10,7 @@ import { ApiError } from '../../utils/ApiError.js';
 import { aiProvider } from '../../services/ai/index.js';
 import type { InteractionInput } from '../../services/ai/AiProvider.js';
 import { logActivity } from '../../services/activity.service.js';
+import { aiRateLimiter } from '../../middleware/rateLimit.js';
 
 const idParam = z.object({ id: z.string().cuid('Invalid id') });
 
@@ -43,7 +44,7 @@ function assertAccess(req: Request, ownerId?: string) {
 }
 
 export const aiRouter = Router();
-aiRouter.use(authenticate);
+aiRouter.use(authenticate, aiRateLimiter);
 
 // Summarize a customer's interaction history and persist the insight.
 aiRouter.post(
