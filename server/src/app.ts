@@ -27,6 +27,7 @@ import { hmacRequestSigning } from './middleware/hmacRequestSigning.js';
 import { idempotencyMiddleware } from './middleware/idempotency.js';
 import { apiAbuseDetection } from './middleware/apiAbuseDetection.js';
 import { openApiRouter } from './openapi/openapi.routes.js';
+import { databaseSecurityContext } from './database/securityContext.js';
 
 const SQLI_SIGNATURES = [
   { name: 'boolean_tautology', pattern: /['"]\s*or\s+1\s*=\s*1/i },
@@ -70,6 +71,7 @@ export function createApp() {
   if (isProd) app.set('trust proxy', 1);
   app.disable('x-powered-by');
   app.use(requestIdMiddleware);
+  app.use(databaseSecurityContext);
 
   app.use(
     helmet({

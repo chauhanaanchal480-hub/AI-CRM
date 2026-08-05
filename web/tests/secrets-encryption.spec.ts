@@ -25,12 +25,14 @@ function productionEnvironment(overrides: Record<string, string> = {}) {
   return {
     NODE_ENV: 'production',
     CORS_ORIGIN: 'https://crm.example.com',
-    DATABASE_URL: 'postgresql://crm:K8!vQ2-zN7_xP4@db.internal:5432/crm?schema=public',
+    DATABASE_URL: 'postgresql://crm:K8!vQ2-zN7_xP4@db.internal:5432/crm?schema=public&sslmode=require',
+    RETENTION_DATABASE_URL: 'postgresql://crm_retention:J7!qP3-wM9_xR5@db.internal:5432/crm?schema=public&sslmode=require',
     JWT_ACCESS_SECRET: strongSecret('access'),
     JWT_REFRESH_SECRET: strongSecret('refresh'),
     COOKIE_SECRET: strongSecret('cookie'),
     ENCRYPTION_KEYS: `primary=${key}`,
     ENCRYPTION_CURRENT_KEY_ID: 'primary',
+    FIELD_SEARCH_KEY: encryptionKey(),
     AI_PROVIDER: 'mock',
     ...overrides,
   };
@@ -66,7 +68,7 @@ test.describe('Enterprise secrets and encryption', () => {
   test('decrypts protected database and API credentials during strict production validation', () => {
     const key = encryptionKey();
     const cipher = SecretCipher.fromConfig({ keys: `primary=${key}`, currentKeyId: 'primary' })!;
-    const databaseUrl = 'postgresql://crm:T9!mR4-zQ8_xL6@db.internal:5432/crm?schema=public';
+    const databaseUrl = 'postgresql://crm:T9!mR4-zQ8_xL6@db.internal:5432/crm?schema=public&sslmode=require';
     const apiKey = 'sk-production-encrypted-provider-key';
 
     const env = parseEnvironment(productionEnvironment({

@@ -5,6 +5,7 @@ const booleanString = z.enum(['true', 'false']).transform((value) => value === '
 const positiveInteger = z.coerce.number().int().positive();
 const duration = z.string().regex(/^\d+[smhd]$/, 'Must be a duration such as 15m, 12h, or 7d');
 const optionalSecret = z.string().trim().optional().default('');
+const nonNegativeInteger = z.coerce.number().int().nonnegative();
 const forbiddenSecret = /(?:change[_-]?me|replace[_-]?me|default|example|password|secret123|crm_password)/i;
 
 const rawEnvironmentSchema = z.object({
@@ -16,6 +17,19 @@ const rawEnvironmentSchema = z.object({
   DATABASE_URL_ENCRYPTED: optionalSecret,
   ENCRYPTION_KEYS: optionalSecret,
   ENCRYPTION_CURRENT_KEY_ID: optionalSecret,
+  FIELD_ENCRYPTION_ENABLED: booleanString.default('true'),
+  FIELD_SEARCH_KEY: optionalSecret,
+
+  DB_QUERY_SLOW_MS: positiveInteger.default(750),
+  DB_QUERY_LOG_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.01),
+
+  DATA_RETENTION_ENABLED: booleanString.default('true'),
+  RETENTION_DATABASE_URL: optionalSecret,
+  DATA_RETENTION_INTERVAL_HOURS: positiveInteger.default(24),
+  SOFT_DELETE_RETENTION_DAYS: nonNegativeInteger.default(30),
+  AUDIT_RETENTION_DAYS: positiveInteger.default(2555),
+  AUTH_RETENTION_DAYS: positiveInteger.default(730),
+  RETENTION_RUN_RETENTION_DAYS: positiveInteger.default(365),
 
   JWT_ACCESS_SECRET: optionalSecret,
   JWT_REFRESH_SECRET: optionalSecret,
@@ -94,6 +108,12 @@ function secretStrengthIssue(name: string, value: string, production: boolean): 
   return null;
 }
 
+function encryptionKeyIssue(name: string, value: string): string | null {
+  if (!value) return `${name} is required`;
+  const decoded = /^[a-f0-9]{64}$/i.test(value) ? Buffer.from(value, 'hex') : Buffer.from(value, 'base64url');
+  return decoded.length === 32 ? null : `${name} must decode to exactly 32 bytes`;
+}
+
 function validateDatabaseUrl(value: string, production: boolean): string[] {
   if (!value) return ['DATABASE_URL is required'];
   try {
@@ -167,6 +187,48 @@ export function parseEnvironment(input: NodeJS.ProcessEnv | Record<string, strin
     issues.push('COOKIE_SECRET must be different from JWT secrets');
   }
   if (production && !cipher) issues.push('ENCRYPTION_KEYS and ENCRYPTION_CURRENT_KEY_ID are required in production');
+  if (production && !raw.FIELD_ENCRYPTION_ENABLED) issues.push('FIELD_ENCRYPTION_ENABLED must be true in production');
+  if (production) {
+    const fieldSearchIssue = secretStrengthIssue('FIELD_SEARCH_KEY', raw.FIELD_SEARCH_KEY, true);
+    if (fieldSearchIssue) issues.push(fieldSearchIssue);
+    const fieldSearchKeyIssue = encryptionKeyIssue('FIELD_SEARCH_KEY', raw.FIELD_SEARCH_KEY);
+    if (fieldSearchKeyIssue) issues.push(fieldSearchKeyIssue);
+    if ([raw.JWT_ACCESS_SECRET, raw.JWT_REFRESH_SECRET, cookieSecret].includes(raw.FIELD_SEARCH_KEY)
+      || raw.ENCRYPTION_KEYS.split(',').some((entry) => entry.slice(entry.indexOf('=') + 1).trim() === raw.FIELD_SEARCH_KEY)) {
+      issues.push('FIELD_SEARCH_KEY must be dedicated and different from all encryption and authentication keys');
+    }
+    try {
+      const databaseUser = decodeURIComponent(new URL(databaseUrl).username);
+      if (['postgres', 'root', 'admin'].includes(databaseUser.toLowerCase())) {
+        issues.push('DATABASE_URL must use a least-privilege application role in production');
+      }
+      const sslMode = new URL(databaseUrl).searchParams.get('sslmode');
+      if (!['require', 'verify-ca', 'verify-full'].includes(sslMode ?? '')) {
+        issues.push('DATABASE_URL must enforce TLS with sslmode=require, verify-ca, or verify-full in production');
+      }
+    } catch {
+      // The URL validation above reports malformed database URLs.
+    }
+    if (raw.DATA_RETENTION_ENABLED) {
+      if (!raw.RETENTION_DATABASE_URL) issues.push('RETENTION_DATABASE_URL is required when data retention is enabled in production');
+      else {
+        issues.push(...validateDatabaseUrl(raw.RETENTION_DATABASE_URL, true).map((issue) => issue.replace('DATABASE_URL', 'RETENTION_DATABASE_URL')));
+        try {
+          const appUrl = new URL(databaseUrl);
+          const retentionUrl = new URL(raw.RETENTION_DATABASE_URL);
+          if (decodeURIComponent(appUrl.username) === decodeURIComponent(retentionUrl.username)) {
+            issues.push('RETENTION_DATABASE_URL must use a separate maintenance role');
+          }
+          const sslMode = retentionUrl.searchParams.get('sslmode');
+          if (!['require', 'verify-ca', 'verify-full'].includes(sslMode ?? '')) {
+            issues.push('RETENTION_DATABASE_URL must enforce TLS in production');
+          }
+        } catch {
+          // URL validation reports malformed retention database URLs.
+        }
+      }
+    }
+  }
 
   const providerKeys = {
     anthropic: anthropicApiKey,
@@ -180,10 +242,12 @@ export function parseEnvironment(input: NodeJS.ProcessEnv | Record<string, strin
 
   registerSecretValues([
     raw.ENCRYPTION_KEYS,
+    raw.FIELD_SEARCH_KEY,
     raw.JWT_ACCESS_SECRET,
     raw.JWT_REFRESH_SECRET,
     cookieSecret,
     databaseUrl,
+    raw.RETENTION_DATABASE_URL,
     anthropicApiKey,
     openAiApiKey,
     geminiApiKey,

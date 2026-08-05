@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { prisma } from './lib/prisma.js';
 import { logger } from './lib/logger.js';
+import { disconnectRetentionDatabase, runDataRetention, startRetentionScheduler } from './database/retention.js';
 
 async function bootstrap() {
   // Fail fast if the database is unreachable.
@@ -20,10 +21,14 @@ async function bootstrap() {
   const server = app.listen(env.PORT, () => {
     logger.info(`🚀 API listening on http://localhost:${env.PORT} (${env.NODE_ENV})`);
   });
+  void runDataRetention();
+  const retentionInterval = startRetentionScheduler();
 
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received — shutting down`);
     server.close(async () => {
+      if (retentionInterval) clearInterval(retentionInterval);
+      await disconnectRetentionDatabase();
       await prisma.$disconnect();
       process.exit(0);
     });

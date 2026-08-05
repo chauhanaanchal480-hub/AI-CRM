@@ -307,23 +307,26 @@ model ApiIdempotencyRecord {
 }
 
 model Customer {
-  id        String         @id @default(cuid())
-  name      String
-  company   String?
-  email     String?
-  phone     String?
-  status    CustomerStatus @default(LEAD)
-  tags      String[]       @default([])
-  website   String?
-  address   String?
-  city      String?
-  country   String?
-  notes     String?
-  avatarUrl String?
-  ownerId   String
-  owner     User           @relation("CustomerOwner", fields: [ownerId], references: [id])
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
+  id                String         @id @default(cuid())
+  name              String
+  company           String?
+  email             String?
+  emailSearchTokens String[]       @default([])
+  phone             String?
+  status            CustomerStatus @default(LEAD)
+  tags              String[]       @default([])
+  website           String?
+  address           String?
+  city              String?
+  country           String?
+  notes             String?
+  avatarUrl         String?
+  ownerId           String
+  owner             User           @relation("CustomerOwner", fields: [ownerId], references: [id])
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  deletedAt         DateTime?
+  deletedById       String?
 
   leads         Lead[]
   deals         Deal[]
@@ -337,33 +340,40 @@ model Customer {
   @@index([ownerId])
   @@index([status])
   @@index([name])
+  @@index([deletedAt])
+  @@index([emailSearchTokens], type: Gin)
 }
 
 model Lead {
-  id           String     @id @default(cuid())
-  title        String
-  status       LeadStatus @default(NEW)
-  source       LeadSource @default(WEBSITE)
-  value        Decimal    @default(0) @db.Decimal(12, 2)
-  contactName  String?
-  contactEmail String?
-  contactPhone String?
-  score        Int?
-  scoreRating  String?
-  scoreReason  String?
-  scoredAt     DateTime?
-  customerId   String?
-  customer     Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  assignedToId String?
-  assignedTo   User?      @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id                       String     @id @default(cuid())
+  title                    String
+  status                   LeadStatus @default(NEW)
+  source                   LeadSource @default(WEBSITE)
+  value                    Decimal    @default(0) @db.Decimal(12, 2)
+  contactName              String?
+  contactEmail             String?
+  contactEmailSearchTokens String[]   @default([])
+  contactPhone             String?
+  score                    Int?
+  scoreRating              String?
+  scoreReason              String?
+  scoredAt                 DateTime?
+  customerId               String?
+  customer                 Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  assignedToId             String?
+  assignedTo               User?      @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @updatedAt
+  deletedAt                DateTime?
+  deletedById              String?
 
   activities Activity[]
 
   @@index([status])
   @@index([assignedToId])
   @@index([customerId])
+  @@index([deletedAt])
+  @@index([contactEmailSearchTokens], type: Gin)
 }
 
 model Pipeline {
@@ -407,6 +417,8 @@ model Deal {
   owner             User       @relation("DealOwner", fields: [ownerId], references: [id])
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
+  deletedAt         DateTime?
+  deletedById       String?
 
   activities  Activity[]
   tasks       Task[]
@@ -416,6 +428,7 @@ model Deal {
   @@index([customerId])
   @@index([ownerId])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model Task {
@@ -434,60 +447,72 @@ model Task {
   deal        Deal?      @relation(fields: [dealId], references: [id], onDelete: SetNull)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+  deletedAt   DateTime?
+  deletedById String?
 
   @@index([assigneeId])
   @@index([status])
   @@index([dueDate])
+  @@index([deletedAt])
 }
 
 model Activity {
-  id         String       @id @default(cuid())
-  type       ActivityType
-  summary    String
-  metadata   Json?
-  userId     String
-  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  customerId String?
-  customer   Customer?    @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  dealId     String?
-  deal       Deal?        @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  leadId     String?
-  lead       Lead?        @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  createdAt  DateTime     @default(now())
+  id          String       @id @default(cuid())
+  type        ActivityType
+  summary     String
+  metadata    Json?
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerId  String?
+  customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  dealId      String?
+  deal        Deal?        @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  leadId      String?
+  lead        Lead?        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdAt   DateTime     @default(now())
+  deletedAt   DateTime?
+  deletedById String?
 
   @@index([customerId])
   @@index([dealId])
   @@index([userId])
   @@index([createdAt])
+  @@index([deletedAt])
 }
 
 model Note {
-  id         String   @id @default(cuid())
-  body       String
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id          String    @id @default(cuid())
+  body        String
+  customerId  String
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  deletedById String?
 
   @@index([customerId])
+  @@index([deletedAt])
 }
 
 model EmailLog {
-  id         String         @id @default(cuid())
-  subject    String
-  body       String
-  direction  EmailDirection
-  fromAddr   String
-  toAddr     String
-  customerId String
-  customer   Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  userId     String
-  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sentAt     DateTime       @default(now())
+  id          String         @id @default(cuid())
+  subject     String
+  body        String
+  direction   EmailDirection
+  fromAddr    String
+  toAddr      String
+  customerId  String
+  customer    Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sentAt      DateTime       @default(now())
+  deletedAt   DateTime?
+  deletedById String?
 
   @@index([customerId])
+  @@index([deletedAt])
 }
 
 model Attachment {
@@ -504,33 +529,55 @@ model Attachment {
   uploadedById String
   uploadedBy   User      @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
   createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+  deletedById  String?
 
   @@index([customerId])
   @@index([dealId])
+  @@index([deletedAt])
 }
 
 model Notification {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type       String
-  title      String
-  body       String?
-  entityType String?
-  entityId   String?
-  read       Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String
+  title       String
+  body        String?
+  entityType  String?
+  entityId    String?
+  read        Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+  deletedById String?
 
   @@index([userId, read])
+  @@index([deletedAt])
 }
 
 model AiInsight {
-  id         String      @id @default(cuid())
-  kind       InsightKind
-  content    String
-  customerId String
-  customer   Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  createdAt  DateTime    @default(now())
+  id          String      @id @default(cuid())
+  kind        InsightKind
+  content     String
+  customerId  String
+  customer    Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime    @default(now())
+  deletedAt   DateTime?
+  deletedById String?
 
   @@index([customerId])
+  @@index([deletedAt])
+}
+
+model DataRetentionRun {
+  id            String    @id @default(cuid())
+  policyVersion String
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  status        String
+  deletedCounts Json?
+  errorCode     String?
+
+  @@index([startedAt])
+  @@index([status, startedAt])
 }

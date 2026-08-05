@@ -1,5 +1,5 @@
 import type { Prisma, Role } from '@prisma/client';
-import { prisma } from '../../lib/prisma.js';
+import { fieldSecurity, prisma } from '../../lib/prisma.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { buildPaginationMeta } from '../../utils/apiResponse.js';
 import { toPrismaPagination } from '../../utils/pagination.js';
@@ -30,6 +30,7 @@ export const leadsService = {
               { title: { contains: q.search, mode: 'insensitive' } },
               { contactName: { contains: q.search, mode: 'insensitive' } },
               { contactEmail: { contains: q.search, mode: 'insensitive' } },
+              { contactEmailSearchTokens: { hasEvery: fieldSecurity.searchTokenQuery(q.search) } },
             ],
           }
         : {}),

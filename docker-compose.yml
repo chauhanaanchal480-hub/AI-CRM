@@ -31,8 +31,12 @@ services:
       PORT: 4000
       DATABASE_URL: ${DATABASE_URL:-}
       DATABASE_URL_ENCRYPTED: ${DATABASE_URL_ENCRYPTED:-}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}
+      RETENTION_DATABASE_URL: ${RETENTION_DATABASE_URL:?RETENTION_DATABASE_URL is required}
       ENCRYPTION_KEYS: ${ENCRYPTION_KEYS:?ENCRYPTION_KEYS is required}
       ENCRYPTION_CURRENT_KEY_ID: ${ENCRYPTION_CURRENT_KEY_ID:?ENCRYPTION_CURRENT_KEY_ID is required}
+      FIELD_ENCRYPTION_ENABLED: ${FIELD_ENCRYPTION_ENABLED:-true}
+      FIELD_SEARCH_KEY: ${FIELD_SEARCH_KEY:?FIELD_SEARCH_KEY is required}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
       COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET is required}
@@ -75,7 +79,7 @@ services:
       - "${API_PORT:-4000}:4000"
     volumes:
       - uploads_data:/app/uploads
-    command: sh -c "npx prisma migrate deploy && npm run db:seed && node dist/server.js"
+    command: sh -c "node dist/database/secureMigrate.js && node dist/database/encryptionBackfill.js && node dist/server.js"
 
   web:
     build:

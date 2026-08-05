@@ -295,10 +295,8 @@ uploadsRouter.delete(
     if (req.user!.role === 'EMPLOYEE' && attachment.uploadedById !== req.user!.sub) {
       throw ApiError.forbidden('You can only delete your own uploads');
     }
-    // Remove the physical file (ignore if already gone). basename() guards
-    // against any path separators sneaking into the stored filename.
-    const filePath = path.join(uploadDir, path.basename(attachment.filename));
-    fs.promises.unlink(filePath).catch(() => undefined);
+    // The retention worker removes the physical object when the soft-delete
+    // retention window expires, so the deletion remains recoverable.
     await prisma.attachment.delete({ where: { id: req.params.id } });
     return sendSuccess(res, { id: req.params.id });
   }),
