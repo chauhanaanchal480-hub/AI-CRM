@@ -7,7 +7,7 @@ import { validate } from '../../middleware/validate.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { sendSuccess } from '../../utils/apiResponse.js';
 import { ApiError } from '../../utils/ApiError.js';
-import { logActivity } from '../../services/activity.service.js';
+import { recordEmailJob } from '../../performance/jobs.js';
 
 const createSchema = z.object({
   customerId: z.string().min(1),
@@ -29,13 +29,7 @@ emailsRouter.post(
     const data = req.body as z.infer<typeof createSchema>;
     const customer = await prisma.customer.findUnique({ where: { id: data.customerId } });
     if (!customer) throw ApiError.notFound('Customer not found');
-    const email = await prisma.emailLog.create({ data: { ...data, userId: req.user!.sub } });
-    await logActivity({
-      type: 'EMAIL',
-      summary: `${data.direction === 'OUTBOUND' ? 'Sent' : 'Received'}: ${data.subject}`,
-      userId: req.user!.sub,
-      customerId: data.customerId,
-    });
+    const email = await recordEmailJob({ ...data, userId: req.user!.sub });
     return sendSuccess(res, email, 201);
   }),
 );

@@ -3,6 +3,8 @@ import { env } from './config/env.js';
 import { prisma } from './lib/prisma.js';
 import { logger } from './lib/logger.js';
 import { disconnectRetentionDatabase, runDataRetention, startRetentionScheduler } from './database/retention.js';
+import { closeQueues } from './performance/queue.js';
+import { disconnectRedis } from './performance/redis.js';
 
 async function bootstrap() {
   // Fail fast if the database is unreachable.
@@ -28,6 +30,8 @@ async function bootstrap() {
     logger.info(`${signal} received — shutting down`);
     server.close(async () => {
       if (retentionInterval) clearInterval(retentionInterval);
+      await closeQueues();
+      await disconnectRedis();
       await disconnectRetentionDatabase();
       await prisma.$disconnect();
       process.exit(0);

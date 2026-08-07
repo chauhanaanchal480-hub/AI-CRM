@@ -14,6 +14,7 @@ import { analyticsRouter } from '../modules/analytics/analytics.routes.js';
 import { aiRouter } from '../modules/ai/ai.routes.js';
 import { exportRouter } from '../modules/export/export.routes.js';
 import { auditRouter } from '../modules/audit/audit.routes.js';
+import { performanceRouter } from '../modules/performance/performance.routes.js';
 
 export const apiRouter = Router();
 
@@ -39,3 +40,4 @@ apiRouter.use('/analytics', analyticsRouter);
 apiRouter.use('/ai', aiRouter);
 apiRouter.use('/export', exportRouter);
 apiRouter.use('/audit', auditRouter);
+apiRouter.use('/performance', performanceRouter);
