@@ -1,11 +1,27 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // The chart vendor chunk is route-lazy and remains ~160 KiB compressed.
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('recharts')) return 'charts';
+          if (id.includes('@dnd-kit')) return 'drag-and-drop';
+          if (id.includes('framer-motion')) return 'motion';
+          if (id.includes('@tanstack')) return 'query';
+          return undefined;
+        },
+      },
+    },
+  },
   resolve: {
-    alias: { '@': path.resolve(__dirname, './src') },
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   server: {
     port: 5173,

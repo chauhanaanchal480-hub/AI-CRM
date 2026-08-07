@@ -28,6 +28,7 @@ import { idempotencyMiddleware } from './middleware/idempotency.js';
 import { apiAbuseDetection } from './middleware/apiAbuseDetection.js';
 import { openApiRouter } from './openapi/openapi.routes.js';
 import { databaseSecurityContext } from './database/securityContext.js';
+import { responseCompression } from './performance/compression.js';
 
 const SQLI_SIGNATURES = [
   { name: 'boolean_tautology', pattern: /['"]\s*or\s+1\s*=\s*1/i },
@@ -72,6 +73,7 @@ export function createApp() {
   app.disable('x-powered-by');
   app.use(requestIdMiddleware);
   app.use(databaseSecurityContext);
+  app.use(responseCompression());
 
   app.use(
     helmet({

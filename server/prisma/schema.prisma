@@ -342,6 +342,8 @@ model Customer {
   @@index([name])
   @@index([deletedAt])
   @@index([emailSearchTokens], type: Gin)
+  @@index([ownerId, status, createdAt])
+  @@index([createdAt])
 }
 
 model Lead {
@@ -374,6 +376,8 @@ model Lead {
   @@index([customerId])
   @@index([deletedAt])
   @@index([contactEmailSearchTokens], type: Gin)
+  @@index([assignedToId, status, createdAt])
+  @@index([source, createdAt])
 }
 
 model Pipeline {
@@ -429,6 +433,9 @@ model Deal {
   @@index([ownerId])
   @@index([status])
   @@index([deletedAt])
+  @@index([stageId, position])
+  @@index([ownerId, status, closedAt])
+  @@index([createdAt])
 }
 
 model Task {
@@ -454,6 +461,8 @@ model Task {
   @@index([status])
   @@index([dueDate])
   @@index([deletedAt])
+  @@index([assigneeId, status, dueDate])
+  @@index([customerId, createdAt])
 }
 
 model Activity {
@@ -478,6 +487,8 @@ model Activity {
   @@index([userId])
   @@index([createdAt])
   @@index([deletedAt])
+  @@index([customerId, createdAt])
+  @@index([leadId, createdAt])
 }
 
 model Note {
@@ -494,6 +505,7 @@ model Note {
 
   @@index([customerId])
   @@index([deletedAt])
+  @@index([customerId, createdAt])
 }
 
 model EmailLog {
@@ -513,6 +525,7 @@ model EmailLog {
 
   @@index([customerId])
   @@index([deletedAt])
+  @@index([customerId, sentAt])
 }
 
 model Attachment {
@@ -535,6 +548,7 @@ model Attachment {
   @@index([customerId])
   @@index([dealId])
   @@index([deletedAt])
+  @@index([customerId, createdAt])
 }
 
 model Notification {
@@ -553,6 +567,7 @@ model Notification {
 
   @@index([userId, read])
   @@index([deletedAt])
+  @@index([userId, read, createdAt])
 }
 
 model AiInsight {
@@ -567,6 +582,7 @@ model AiInsight {
 
   @@index([customerId])
   @@index([deletedAt])
+  @@index([customerId, createdAt])
 }
 
 model DataRetentionRun {

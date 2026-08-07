@@ -23,6 +23,21 @@ const rawEnvironmentSchema = z.object({
   DB_QUERY_SLOW_MS: positiveInteger.default(750),
   DB_QUERY_LOG_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.01),
 
+  REDIS_ENABLED: booleanString.default('false'),
+  REDIS_URL: optionalSecret,
+  REDIS_URL_ENCRYPTED: optionalSecret,
+  REDIS_KEY_PREFIX: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9:_-]+$/).default('ai-crm'),
+  CACHE_DASHBOARD_TTL_SECONDS: positiveInteger.default(60),
+  CACHE_ANALYTICS_TTL_SECONDS: positiveInteger.default(300),
+  CACHE_ENTITY_TTL_SECONDS: positiveInteger.default(120),
+  CACHE_AI_TTL_SECONDS: positiveInteger.default(900),
+  QUEUE_DEFAULT_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+  QUEUE_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(100).default(5),
+  QUEUE_JOB_TIMEOUT_MS: positiveInteger.default(120_000),
+  EXPORT_BATCH_SIZE: z.coerce.number().int().min(50).max(5_000).default(500),
+  EXPORT_DIR: z.string().trim().min(1).default('exports'),
+  RESPONSE_COMPRESSION_THRESHOLD_BYTES: positiveInteger.default(1_024),
+
   DATA_RETENTION_ENABLED: booleanString.default('true'),
   RETENTION_DATABASE_URL: optionalSecret,
   DATA_RETENTION_INTERVAL_HOURS: positiveInteger.default(24),
@@ -166,6 +181,7 @@ export function parseEnvironment(input: NodeJS.ProcessEnv | Record<string, strin
   }
 
   const databaseUrl = decryptConfiguredSecret('DATABASE_URL', raw.DATABASE_URL, raw.DATABASE_URL_ENCRYPTED, cipher);
+  const redisUrl = decryptConfiguredSecret('REDIS_URL', raw.REDIS_URL, raw.REDIS_URL_ENCRYPTED, cipher);
   const anthropicApiKey = decryptConfiguredSecret('ANTHROPIC_API_KEY', raw.ANTHROPIC_API_KEY, raw.ANTHROPIC_API_KEY_ENCRYPTED, cipher);
   const openAiApiKey = decryptConfiguredSecret('OPENAI_API_KEY', raw.OPENAI_API_KEY, raw.OPENAI_API_KEY_ENCRYPTED, cipher);
   const geminiApiKey = decryptConfiguredSecret('GEMINI_API_KEY', raw.GEMINI_API_KEY, raw.GEMINI_API_KEY_ENCRYPTED, cipher);
@@ -188,6 +204,17 @@ export function parseEnvironment(input: NodeJS.ProcessEnv | Record<string, strin
   }
   if (production && !cipher) issues.push('ENCRYPTION_KEYS and ENCRYPTION_CURRENT_KEY_ID are required in production');
   if (production && !raw.FIELD_ENCRYPTION_ENABLED) issues.push('FIELD_ENCRYPTION_ENABLED must be true in production');
+  if (raw.REDIS_ENABLED && !redisUrl) issues.push('REDIS_URL is required when REDIS_ENABLED is true');
+  if (redisUrl) {
+    try {
+      const parsedRedisUrl = new URL(redisUrl);
+      if (!['redis:', 'rediss:'].includes(parsedRedisUrl.protocol)) issues.push('REDIS_URL must use redis or rediss');
+      if (!parsedRedisUrl.hostname) issues.push('REDIS_URL must include a hostname');
+      if (production && !parsedRedisUrl.password) issues.push('REDIS_URL must include authentication in production');
+    } catch {
+      issues.push('REDIS_URL must be a valid Redis URL');
+    }
+  }
   if (production) {
     const fieldSearchIssue = secretStrengthIssue('FIELD_SEARCH_KEY', raw.FIELD_SEARCH_KEY, true);
     if (fieldSearchIssue) issues.push(fieldSearchIssue);
@@ -247,6 +274,7 @@ export function parseEnvironment(input: NodeJS.ProcessEnv | Record<string, strin
     raw.JWT_REFRESH_SECRET,
     cookieSecret,
     databaseUrl,
+    redisUrl,
     raw.RETENTION_DATABASE_URL,
     anthropicApiKey,
     openAiApiKey,
@@ -256,6 +284,7 @@ export function parseEnvironment(input: NodeJS.ProcessEnv | Record<string, strin
   return {
     ...raw,
     DATABASE_URL: databaseUrl,
+    REDIS_URL: redisUrl,
     JWT_ACCESS_SECRET: raw.JWT_ACCESS_SECRET,
     JWT_REFRESH_SECRET: raw.JWT_REFRESH_SECRET,
     COOKIE_SECRET: cookieSecret,

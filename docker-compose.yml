@@ -17,6 +17,21 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7.4-alpine
+    container_name: crm_redis
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
       context: ./server
@@ -26,13 +41,29 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    environment:
+      redis:
+        condition: service_healthy
+    environment: &api_environment
       NODE_ENV: production
       PORT: 4000
       DATABASE_URL: ${DATABASE_URL:-}
       DATABASE_URL_ENCRYPTED: ${DATABASE_URL_ENCRYPTED:-}
       MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}
       RETENTION_DATABASE_URL: ${RETENTION_DATABASE_URL:?RETENTION_DATABASE_URL is required}
+      REDIS_ENABLED: ${REDIS_ENABLED:-true}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379/0}
+      REDIS_URL_ENCRYPTED: ${REDIS_URL_ENCRYPTED:-}
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-ai-crm}
+      CACHE_DASHBOARD_TTL_SECONDS: ${CACHE_DASHBOARD_TTL_SECONDS:-60}
+      CACHE_ANALYTICS_TTL_SECONDS: ${CACHE_ANALYTICS_TTL_SECONDS:-300}
+      CACHE_ENTITY_TTL_SECONDS: ${CACHE_ENTITY_TTL_SECONDS:-120}
+      CACHE_AI_TTL_SECONDS: ${CACHE_AI_TTL_SECONDS:-900}
+      QUEUE_DEFAULT_ATTEMPTS: ${QUEUE_DEFAULT_ATTEMPTS:-5}
+      QUEUE_WORKER_CONCURRENCY: ${QUEUE_WORKER_CONCURRENCY:-5}
+      QUEUE_JOB_TIMEOUT_MS: ${QUEUE_JOB_TIMEOUT_MS:-120000}
+      EXPORT_BATCH_SIZE: ${EXPORT_BATCH_SIZE:-500}
+      EXPORT_DIR: ${EXPORT_DIR:-exports}
+      RESPONSE_COMPRESSION_THRESHOLD_BYTES: ${RESPONSE_COMPRESSION_THRESHOLD_BYTES:-1024}
       ENCRYPTION_KEYS: ${ENCRYPTION_KEYS:?ENCRYPTION_KEYS is required}
       ENCRYPTION_CURRENT_KEY_ID: ${ENCRYPTION_CURRENT_KEY_ID:?ENCRYPTION_CURRENT_KEY_ID is required}
       FIELD_ENCRYPTION_ENABLED: ${FIELD_ENCRYPTION_ENABLED:-true}
@@ -79,7 +110,27 @@ services:
       - "${API_PORT:-4000}:4000"
     volumes:
       - uploads_data:/app/uploads
+      - exports_data:/app/exports
     command: sh -c "node dist/database/secureMigrate.js && node dist/database/encryptionBackfill.js && node dist/server.js"
+
+  worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: crm_worker
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    environment: *api_environment
+    volumes:
+      - uploads_data:/app/uploads
+      - exports_data:/app/exports
+    command: node dist/worker.js
 
   web:
     build:
@@ -97,4 +148,6 @@ services:
 
 volumes:
   db_data:
+  redis_data:
   uploads_data:
+  exports_data:
