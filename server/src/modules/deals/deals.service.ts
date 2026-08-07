@@ -1,7 +1,8 @@
-import type { Prisma, Role } from '@prisma/client';
+import { Prisma, type Role } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { logActivity, notify } from '../../services/activity.service.js';
+import { invalidateCache } from '../../performance/cache.js';
 
 interface Actor { id: string; role: Role; }
 
@@ -13,6 +14,23 @@ const dealInclude = {
   customer: { select: { id: true, name: true, company: true, avatarUrl: true } },
   owner: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
 } satisfies Prisma.DealInclude;
+
+async function bulkResequence(
+  tx: Prisma.TransactionClient,
+  rows: readonly { id: string; position: number; stageId: string }[],
+) {
+  if (rows.length === 0) return;
+  const values = Prisma.join(rows.map((row) => Prisma.sql`(${row.id}, ${row.position}, ${row.stageId})`));
+  await tx.$executeRaw(Prisma.sql`
+    UPDATE "Deal" AS deal
+    SET "position" = changes.position,
+        "stageId" = changes.stage_id,
+        "updatedAt" = NOW()
+    FROM (VALUES ${values}) AS changes(id, position, stage_id)
+    WHERE deal.id = changes.id
+      AND deal."deletedAt" IS NULL
+  `);
+}
 
 export const dealsService = {
   /** Returns the default pipeline with its stages and each stage's ordered deals. */
@@ -29,8 +47,14 @@ export const dealsService = {
       orderBy: { position: 'asc' },
     });
 
+    const dealsByStage = new Map<string, typeof deals>();
+    for (const deal of deals) {
+      const stageDeals = dealsByStage.get(deal.stageId);
+      if (stageDeals) stageDeals.push(deal);
+      else dealsByStage.set(deal.stageId, [deal]);
+    }
     const columns = pipeline.stages.map((stage) => {
-      const stageDeals = deals.filter((d) => d.stageId === stage.id);
+      const stageDeals = dealsByStage.get(stage.id) ?? [];
       return {
         ...stage,
         deals: stageDeals,
@@ -111,22 +135,16 @@ export const dealsService = {
       const clamped = Math.min(Math.max(targetPosition, 0), destSiblings.length);
       destSiblings.splice(clamped, 0, deal as (typeof destSiblings)[number]);
 
-      // Re-sequence destination.
-      await Promise.all(
-        destSiblings.map((d, index) =>
-          tx.deal.update({
-            where: { id: d.id },
-            data: { position: index, ...(d.id === id ? { stageId: targetStageId } : {}) },
-          }),
-        ),
-      );
-
-      // If moved across columns, re-sequence the source too.
-      if (deal.stageId !== targetStageId) {
-        await Promise.all(
-          sourceSiblings.map((d, index) => tx.deal.update({ where: { id: d.id }, data: { position: index } })),
-        );
-      }
+      // One parameterized update replaces an update-per-card N+1 pattern.
+      const destinationRows = destSiblings.map((item, index) => ({
+        id: item.id,
+        position: index,
+        stageId: item.id === id ? targetStageId : item.stageId,
+      }));
+      const sourceRows = deal.stageId === targetStageId
+        ? []
+        : sourceSiblings.map((item, index) => ({ id: item.id, position: index, stageId: item.stageId }));
+      await bulkResequence(tx, [...destinationRows, ...sourceRows]);
     });
 
     if (deal.stageId !== targetStageId) {
@@ -150,9 +168,11 @@ export const dealsService = {
     await prisma.deal.delete({ where: { id } });
     // Compact the column the card left behind.
     const siblings = await prisma.deal.findMany({ where: { stageId: deal.stageId }, orderBy: { position: 'asc' } });
-    await prisma.$transaction(
-      siblings.map((d, index) => prisma.deal.update({ where: { id: d.id }, data: { position: index } })),
-    );
+    await prisma.$transaction((tx) => bulkResequence(
+      tx,
+      siblings.map((item, index) => ({ id: item.id, position: index, stageId: item.stageId })),
+    ));
+    await invalidateCache('analytics', `customer:${deal.customerId}`, `ai:customer:${deal.customerId}`);
     return { id };
   },
 };

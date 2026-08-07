@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { ActivityType, Prisma } from '@prisma/client';
+import { invalidateCache } from '../performance/cache.js';
 
 interface LogActivityInput {
   type: ActivityType;
@@ -13,7 +14,7 @@ interface LogActivityInput {
 
 /** Records an entry on the activity timeline. Fire-and-forget safe. */
 export async function logActivity(input: LogActivityInput) {
-  return prisma.activity.create({
+  const activity = await prisma.activity.create({
     data: {
       type: input.type,
       summary: input.summary,
@@ -24,6 +25,12 @@ export async function logActivity(input: LogActivityInput) {
       metadata: input.metadata,
     },
   });
+  await invalidateCache(
+    'analytics',
+    ...(input.customerId ? [`customer:${input.customerId}`, `ai:customer:${input.customerId}`] : []),
+    ...(input.leadId ? [`lead:${input.leadId}`] : []),
+  );
+  return activity;
 }
 
 interface NotifyInput {

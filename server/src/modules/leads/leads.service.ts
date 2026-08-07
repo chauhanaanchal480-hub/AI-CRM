@@ -5,6 +5,7 @@ import { buildPaginationMeta } from '../../utils/apiResponse.js';
 import { toPrismaPagination } from '../../utils/pagination.js';
 import { logActivity } from '../../services/activity.service.js';
 import type { LeadListQuery } from './leads.validation.js';
+import { cached, cacheTtl, invalidateCache } from '../../performance/cache.js';
 
 interface Actor { id: string; role: Role; }
 
@@ -19,6 +20,12 @@ const includeRefs = {
 
 export const leadsService = {
   async list(actor: Actor, q: LeadListQuery) {
+    return cached({
+      namespace: 'leads:list',
+      scope: { actor, query: q },
+      tags: ['leads'],
+      ttlSeconds: cacheTtl.entity,
+      load: async () => {
     const where: Prisma.LeadWhereInput = {
       ...scopeFor(actor),
       ...(q.status ? { status: q.status } : {}),
@@ -44,16 +51,26 @@ export const leadsService = {
       }),
       prisma.lead.count({ where }),
     ]);
-    return { items, meta: buildPaginationMeta(q.page, q.limit, total) };
+        return { items, meta: buildPaginationMeta(q.page, q.limit, total) };
+      },
+    });
   },
 
   async getById(actor: Actor, id: string) {
+    return cached({
+      namespace: 'leads:detail',
+      scope: { actor, id },
+      tags: ['leads', `lead:${id}`],
+      ttlSeconds: cacheTtl.entity,
+      load: async () => {
     const lead = await prisma.lead.findUnique({ where: { id }, include: includeRefs });
     if (!lead) throw ApiError.notFound('Lead not found');
     if (actor.role === 'EMPLOYEE' && lead.assignedToId !== actor.id) {
       throw ApiError.forbidden('You do not have access to this lead');
     }
-    return lead;
+        return lead;
+      },
+    });
   },
 
   async create(actor: Actor, data: Record<string, unknown>) {
@@ -66,6 +83,7 @@ export const leadsService = {
       include: includeRefs,
     });
     await logActivity({ type: 'STATUS_CHANGE', summary: `Lead "${lead.title}" created`, userId: actor.id, customerId: lead.customerId, leadId: lead.id });
+    await invalidateCache('leads', 'analytics', `lead:${lead.id}`, ...(lead.customerId ? [`customer:${lead.customerId}`, `ai:customer:${lead.customerId}`] : []));
     return lead;
   },
 
@@ -77,6 +95,7 @@ export const leadsService = {
       include: includeRefs,
     });
     await logActivity({ type: 'STATUS_CHANGE', summary: `Lead "${lead.title}" updated to ${lead.status}`, userId: actor.id, customerId: lead.customerId, leadId: lead.id });
+    await invalidateCache('leads', 'analytics', `lead:${id}`, ...(lead.customerId ? [`customer:${lead.customerId}`, `ai:customer:${lead.customerId}`] : []));
     return lead;
   },
 
@@ -102,12 +121,14 @@ export const leadsService = {
       include: includeRefs,
     });
     await logActivity({ type: 'STATUS_CHANGE', summary: `Lead "${lead.title}" converted to customer`, userId: actor.id, customerId, leadId: id });
+    await invalidateCache('leads', 'customers', 'analytics', `lead:${id}`, `customer:${customerId}`, `ai:customer:${customerId}`);
     return updated;
   },
 
   async remove(actor: Actor, id: string) {
-    await this.getById(actor, id);
+    const lead = await this.getById(actor, id);
     await prisma.lead.delete({ where: { id } });
+    await invalidateCache('leads', 'analytics', `lead:${id}`, ...(lead.customerId ? [`customer:${lead.customerId}`, `ai:customer:${lead.customerId}`] : []));
     return { id };
   },
 };

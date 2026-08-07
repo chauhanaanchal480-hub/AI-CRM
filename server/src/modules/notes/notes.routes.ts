@@ -8,6 +8,7 @@ import { asyncHandler } from '../../utils/asyncHandler.js';
 import { sendSuccess } from '../../utils/apiResponse.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { logActivity } from '../../services/activity.service.js';
+import { invalidateCache } from '../../performance/cache.js';
 
 const createSchema = z.object({
   customerId: z.string().min(1),
@@ -45,6 +46,7 @@ notesRouter.delete(
       throw ApiError.forbidden('You can only delete your own notes');
     }
     await prisma.note.delete({ where: { id: req.params.id } });
+    await invalidateCache(`customer:${note.customerId}`, `ai:customer:${note.customerId}`);
     return sendSuccess(res, { id: req.params.id });
   }),
 );

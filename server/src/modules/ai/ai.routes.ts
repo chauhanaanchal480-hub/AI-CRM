@@ -11,6 +11,8 @@ import { aiProvider } from '../../services/ai/index.js';
 import type { InteractionInput } from '../../services/ai/AiProvider.js';
 import { logActivity } from '../../services/activity.service.js';
 import { aiRateLimiter } from '../../middleware/rateLimit.js';
+import { cached, cacheTtl, invalidateCache } from '../../performance/cache.js';
+import { runAiJob } from '../../performance/jobs.js';
 
 const idParam = z.object({ id: z.string().cuid('Invalid id') });
 
@@ -56,7 +58,13 @@ aiRouter.post(
     assertAccess(req, customer.ownerId);
 
     const { input } = await loadContext(req.params.id);
-    const summary = await aiProvider.summarizeInteractions(input);
+    const summary = await cached({
+      namespace: `ai:${aiProvider.name}:summary`,
+      scope: input,
+      tags: [`ai:customer:${req.params.id}`],
+      ttlSeconds: cacheTtl.ai,
+      load: () => runAiJob({ operation: 'summary', input }, () => aiProvider.summarizeInteractions(input)),
+    });
 
     const insight = await prisma.aiInsight.create({
       data: { kind: 'SUMMARY', content: summary, customerId: req.params.id },
@@ -76,7 +84,13 @@ aiRouter.post(
     assertAccess(req, customer.ownerId);
 
     const { input } = await loadContext(req.params.id);
-    const suggestions = await aiProvider.suggestFollowUps(input);
+    const suggestions = await cached({
+      namespace: `ai:${aiProvider.name}:followups`,
+      scope: input,
+      tags: [`ai:customer:${req.params.id}`],
+      ttlSeconds: cacheTtl.ai,
+      load: () => runAiJob({ operation: 'followups', input }, () => aiProvider.suggestFollowUps(input)),
+    });
 
     // Persist a compact record of the suggestions for the timeline.
     await prisma.aiInsight.create({
@@ -101,12 +115,19 @@ aiRouter.post(
 
     const { name, input } = await loadContext(req.params.id);
     const body = req.body as z.infer<typeof draftEmailSchema>;
-    const draft = await aiProvider.generateEmail({
+    const emailInput = {
       customerName: name,
       company: customer.company,
       purpose: body.purpose,
       tone: body.tone,
       context: input,
+    };
+    const draft = await cached({
+      namespace: `ai:${aiProvider.name}:email`,
+      scope: emailInput,
+      tags: [`ai:customer:${req.params.id}`],
+      ttlSeconds: cacheTtl.ai,
+      load: () => runAiJob({ operation: 'email-draft', input: emailInput }, () => aiProvider.generateEmail(emailInput)),
     });
     return sendSuccess(res, { draft, provider: aiProvider.name });
   }),
@@ -127,7 +148,14 @@ aiRouter.post(
 
     const { name } = await loadContext(req.params.id);
     const { transcript, save } = req.body as z.infer<typeof meetingSchema>;
-    const result = await aiProvider.summarizeMeeting({ customerName: name, transcript });
+    const meetingInput = { customerName: name, transcript };
+    const result = await cached({
+      namespace: `ai:${aiProvider.name}:meeting`,
+      scope: meetingInput,
+      tags: [`ai:customer:${req.params.id}`],
+      ttlSeconds: cacheTtl.ai,
+      load: () => runAiJob({ operation: 'meeting-summary', input: meetingInput }, () => aiProvider.summarizeMeeting(meetingInput)),
+    });
 
     if (save) {
       const content = [
@@ -157,7 +185,7 @@ aiRouter.post(
     }
 
     const ageDays = Math.floor((Date.now() - lead.createdAt.getTime()) / 86_400_000);
-    const result = await aiProvider.scoreLead({
+    const scoreInput = {
       title: lead.title,
       status: lead.status,
       source: lead.source,
@@ -166,6 +194,13 @@ aiRouter.post(
       hasContactPhone: !!lead.contactPhone,
       ageDays,
       activityCount: lead._count.activities,
+    };
+    const result = await cached({
+      namespace: `ai:${aiProvider.name}:lead-score`,
+      scope: scoreInput,
+      tags: [`lead:${lead.id}`],
+      ttlSeconds: cacheTtl.ai,
+      load: () => runAiJob({ operation: 'lead-score', input: scoreInput }, () => aiProvider.scoreLead(scoreInput)),
     });
 
     const updated = await prisma.lead.update({
@@ -176,6 +211,7 @@ aiRouter.post(
         customer: { select: { id: true, name: true, company: true } },
       },
     });
+    await invalidateCache('leads', 'analytics', `lead:${lead.id}`);
     return sendSuccess(res, { lead: updated, provider: aiProvider.name });
   }),
 );

@@ -5,6 +5,7 @@ import { buildPaginationMeta } from '../../utils/apiResponse.js';
 import { toPrismaPagination } from '../../utils/pagination.js';
 import { logActivity } from '../../services/activity.service.js';
 import type { CustomerListQuery } from './customers.validation.js';
+import { cached, cacheTtl, invalidateCache } from '../../performance/cache.js';
 
 interface Actor {
   id: string;
@@ -21,6 +22,12 @@ function scopeFor(actor: Actor): Prisma.CustomerWhereInput {
 
 export const customersService = {
   async list(actor: Actor, query: CustomerListQuery) {
+    return cached({
+      namespace: 'customers:list',
+      scope: { actor, query },
+      tags: ['customers'],
+      ttlSeconds: cacheTtl.entity,
+      load: async () => {
     const { page, limit, search, status, ownerId, tag, sortBy, sortOrder } = query;
     const where: Prisma.CustomerWhereInput = {
       ...scopeFor(actor),
@@ -58,10 +65,18 @@ export const customersService = {
       prisma.customer.count({ where }),
     ]);
 
-    return { items, meta: buildPaginationMeta(page, limit, total) };
+        return { items, meta: buildPaginationMeta(page, limit, total) };
+      },
+    });
   },
 
   async getById(actor: Actor, id: string) {
+    return cached({
+      namespace: 'customers:detail',
+      scope: { actor, id },
+      tags: ['customers', `customer:${id}`],
+      ttlSeconds: cacheTtl.entity,
+      load: async () => {
     const customer = await prisma.customer.findUnique({
       where: { id },
       include: {
@@ -86,7 +101,9 @@ export const customersService = {
     if (actor.role === 'EMPLOYEE' && customer.ownerId !== actor.id) {
       throw ApiError.forbidden('You do not have access to this customer');
     }
-    return customer;
+        return customer;
+      },
+    });
   },
 
   async create(actor: Actor, data: Record<string, unknown>) {
@@ -105,6 +122,7 @@ export const customersService = {
       userId: actor.id,
       customerId: customer.id,
     });
+    await invalidateCache('customers', 'analytics', `customer:${customer.id}`, `ai:customer:${customer.id}`);
     return customer;
   },
 
@@ -124,6 +142,7 @@ export const customersService = {
       userId: actor.id,
       customerId: customer.id,
     });
+    await invalidateCache('customers', 'analytics', `customer:${id}`, `ai:customer:${id}`);
     return customer;
   },
 
@@ -132,6 +151,7 @@ export const customersService = {
     // Only managers/admins may delete; employees can edit but not destroy.
     if (actor.role === 'EMPLOYEE') throw ApiError.forbidden('Only managers can delete customers');
     await prisma.customer.delete({ where: { id } });
+    await invalidateCache('customers', 'leads', 'analytics', `customer:${id}`, `ai:customer:${id}`);
     return { id };
   },
 };

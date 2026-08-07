@@ -4,6 +4,7 @@ import { ApiError } from '../../utils/ApiError.js';
 import { buildPaginationMeta } from '../../utils/apiResponse.js';
 import { toPrismaPagination } from '../../utils/pagination.js';
 import type { TaskListQuery } from './tasks.validation.js';
+import { invalidateCache } from '../../performance/cache.js';
 
 interface Actor { id: string; role: Role; }
 
@@ -46,22 +47,27 @@ export const tasksService = {
   },
 
   async create(actor: Actor, data: Record<string, unknown>) {
-    return prisma.task.create({
+    const task = await prisma.task.create({
       data: { ...(data as object), assigneeId: (data.assigneeId as string) || actor.id } as Prisma.TaskUncheckedCreateInput,
       include,
     });
+    await invalidateCache('analytics', ...(task.customerId ? [`customer:${task.customerId}`] : []));
+    return task;
   },
 
   async update(actor: Actor, id: string, data: Record<string, unknown>) {
     await this.getById(actor, id);
     const patch: Prisma.TaskUncheckedUpdateInput = { ...(data as object) };
     if (data.status) patch.completedAt = data.status === 'DONE' ? new Date() : null;
-    return prisma.task.update({ where: { id }, data: patch, include });
+    const task = await prisma.task.update({ where: { id }, data: patch, include });
+    await invalidateCache('analytics', ...(task.customerId ? [`customer:${task.customerId}`] : []));
+    return task;
   },
 
   async remove(actor: Actor, id: string) {
-    await this.getById(actor, id);
+    const task = await this.getById(actor, id);
     await prisma.task.delete({ where: { id } });
+    await invalidateCache('analytics', ...(task.customerId ? [`customer:${task.customerId}`] : []));
     return { id };
   },
 };
