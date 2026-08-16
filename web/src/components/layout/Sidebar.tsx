@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, type NavLinkRenderProps } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Target, KanbanSquare, BarChart3,
   CheckSquare, Settings, Sparkles, X,
@@ -57,7 +57,7 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
               key={item.to}
               to={item.to}
               onClick={onClose}
-              className={({ isActive }) =>
+              className={({ isActive }: NavLinkRenderProps) =>
                 cn(
                   'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all',
                   isActive
@@ -76,7 +76,7 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
           <NavLink
             to="/app/settings"
             onClick={onClose}
-            className={({ isActive }) =>
+            className={({ isActive }: NavLinkRenderProps) =>
               cn(
                 'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all',
                 isActive ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',

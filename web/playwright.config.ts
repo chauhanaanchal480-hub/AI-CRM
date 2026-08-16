@@ -51,15 +51,17 @@ export default defineConfig({
 
   webServer: [
     {
-      command: 'npm run dev --workspace server',
-      cwd: '..',
+      command: 'node --import tsx src/server.ts',
+      cwd: '../server',
       env: {
         API_HMAC_KEYS: `${hmacKeyId}=${hmacSecret}`,
         API_HMAC_REQUIRED: 'false',
         API_DOCS_ENABLED: 'true',
       },
       url: 'http://localhost:4000/health',
-      reuseExistingServer: true,
+      // API boundary tests depend on the security configuration above. Reusing
+      // an arbitrary dev server can silently run them against a different key set.
+      reuseExistingServer: false,
       timeout: 120000,
     },
     {
