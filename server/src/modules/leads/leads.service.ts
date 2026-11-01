@@ -3,7 +3,7 @@ import { fieldSecurity, prisma } from '../../lib/prisma.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { buildPaginationMeta } from '../../utils/apiResponse.js';
 import { toPrismaPagination } from '../../utils/pagination.js';
-import { logActivity } from '../../services/activity.service.js';
+import { invalidateActivityCache, persistActivity } from '../../services/activity.service.js';
 import type { LeadListQuery } from './leads.validation.js';
 import { cached, cacheTtl, invalidateCache } from '../../performance/cache.js';
 
@@ -74,27 +74,41 @@ export const leadsService = {
   },
 
   async create(actor: Actor, data: Record<string, unknown>) {
-    const lead = await prisma.lead.create({
-      data: {
-        ...(data as object),
-        contactEmail: (data.contactEmail as string) || null,
-        assignedToId: (data.assignedToId as string) || actor.id,
-      } as Prisma.LeadUncheckedCreateInput,
-      include: includeRefs,
+    const lead = await prisma.$transaction(async (tx) => {
+      const created = await tx.lead.create({
+        data: {
+          ...(data as object),
+          contactEmail: (data.contactEmail as string) || null,
+          assignedToId: (data.assignedToId as string) || actor.id,
+        } as Prisma.LeadUncheckedCreateInput,
+        include: includeRefs,
+      });
+      await persistActivity({
+        type: 'STATUS_CHANGE',
+        summary: `Lead "${created.title}" created`,
+        userId: actor.id,
+        customerId: created.customerId,
+        leadId: created.id,
+      }, tx);
+      return created;
     });
-    await logActivity({ type: 'STATUS_CHANGE', summary: `Lead "${lead.title}" created`, userId: actor.id, customerId: lead.customerId, leadId: lead.id });
+    await invalidateActivityCache({ type: 'STATUS_CHANGE', summary: `Lead "${lead.title}" created`, userId: actor.id, customerId: lead.customerId, leadId: lead.id });
     await invalidateCache('leads', 'analytics', `lead:${lead.id}`, ...(lead.customerId ? [`customer:${lead.customerId}`, `ai:customer:${lead.customerId}`] : []));
     return lead;
   },
 
   async update(actor: Actor, id: string, data: Record<string, unknown>) {
     await this.getById(actor, id);
-    const lead = await prisma.lead.update({
-      where: { id },
-      data: { ...(data as object), ...(data.contactEmail !== undefined ? { contactEmail: (data.contactEmail as string) || null } : {}) } as Prisma.LeadUncheckedUpdateInput,
-      include: includeRefs,
+    const lead = await prisma.$transaction(async (tx) => {
+      const updated = await tx.lead.update({
+        where: { id },
+        data: { ...(data as object), ...(data.contactEmail !== undefined ? { contactEmail: (data.contactEmail as string) || null } : {}) } as Prisma.LeadUncheckedUpdateInput,
+        include: includeRefs,
+      });
+      await persistActivity({ type: 'STATUS_CHANGE', summary: `Lead "${updated.title}" updated to ${updated.status}`, userId: actor.id, customerId: updated.customerId, leadId: updated.id }, tx);
+      return updated;
     });
-    await logActivity({ type: 'STATUS_CHANGE', summary: `Lead "${lead.title}" updated to ${lead.status}`, userId: actor.id, customerId: lead.customerId, leadId: lead.id });
+    await invalidateActivityCache({ type: 'STATUS_CHANGE', summary: `Lead "${lead.title}" updated to ${lead.status}`, userId: actor.id, customerId: lead.customerId, leadId: lead.id });
     await invalidateCache('leads', 'analytics', `lead:${id}`, ...(lead.customerId ? [`customer:${lead.customerId}`, `ai:customer:${lead.customerId}`] : []));
     return lead;
   },
@@ -102,25 +116,29 @@ export const leadsService = {
   /** Convert a lead into a customer (if not already linked) and mark CONVERTED. */
   async convert(actor: Actor, id: string) {
     const lead = await this.getById(actor, id);
-    let customerId = lead.customerId;
-    if (!customerId) {
-      const customer = await prisma.customer.create({
-        data: {
-          name: lead.contactName ?? lead.title,
-          email: lead.contactEmail,
-          phone: lead.contactPhone,
-          status: 'ACTIVE',
-          ownerId: lead.assignedToId ?? actor.id,
-        },
+    const { updated, customerId } = await prisma.$transaction(async (tx) => {
+      let convertedCustomerId = lead.customerId;
+      if (!convertedCustomerId) {
+        const customer = await tx.customer.create({
+          data: {
+            name: lead.contactName ?? lead.title,
+            email: lead.contactEmail,
+            phone: lead.contactPhone,
+            status: 'ACTIVE',
+            ownerId: lead.assignedToId ?? actor.id,
+          },
+        });
+        convertedCustomerId = customer.id;
+      }
+      const converted = await tx.lead.update({
+        where: { id },
+        data: { status: 'CONVERTED', customerId: convertedCustomerId },
+        include: includeRefs,
       });
-      customerId = customer.id;
-    }
-    const updated = await prisma.lead.update({
-      where: { id },
-      data: { status: 'CONVERTED', customerId },
-      include: includeRefs,
+      await persistActivity({ type: 'STATUS_CHANGE', summary: `Lead "${lead.title}" converted to customer`, userId: actor.id, customerId: convertedCustomerId, leadId: id }, tx);
+      return { updated: converted, customerId: convertedCustomerId };
     });
-    await logActivity({ type: 'STATUS_CHANGE', summary: `Lead "${lead.title}" converted to customer`, userId: actor.id, customerId, leadId: id });
+    await invalidateActivityCache({ type: 'STATUS_CHANGE', summary: `Lead "${lead.title}" converted to customer`, userId: actor.id, customerId, leadId: id });
     await invalidateCache('leads', 'customers', 'analytics', `lead:${id}`, `customer:${customerId}`, `ai:customer:${customerId}`);
     return updated;
   },

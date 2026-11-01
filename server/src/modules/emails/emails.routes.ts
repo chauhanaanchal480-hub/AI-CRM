@@ -1,13 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { Request, Response } from 'express';
-import { prisma } from '../../lib/prisma.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { validate } from '../../middleware/validate.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { sendSuccess } from '../../utils/apiResponse.js';
-import { ApiError } from '../../utils/ApiError.js';
-import { recordEmailJob } from '../../performance/jobs.js';
+import { emailsService, type RecordEmailInput } from './emails.service.js';
 
 const createSchema = z.object({
   customerId: z.string().min(1),
@@ -27,9 +25,7 @@ emailsRouter.post(
   validate({ body: createSchema }),
   asyncHandler(async (req: Request, res: Response) => {
     const data = req.body as z.infer<typeof createSchema>;
-    const customer = await prisma.customer.findUnique({ where: { id: data.customerId } });
-    if (!customer) throw ApiError.notFound('Customer not found');
-    const email = await recordEmailJob({ ...data, userId: req.user!.sub });
+    const email = await emailsService.record(req.user!.sub, data as RecordEmailInput);
     return sendSuccess(res, email, 201);
   }),
 );

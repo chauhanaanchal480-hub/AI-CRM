@@ -2,7 +2,7 @@ import { prisma } from '../lib/prisma.js';
 import type { ActivityType, Prisma } from '@prisma/client';
 import { invalidateCache } from '../performance/cache.js';
 
-interface LogActivityInput {
+export interface LogActivityInput {
   type: ActivityType;
   summary: string;
   userId: string;
@@ -12,9 +12,11 @@ interface LogActivityInput {
   metadata?: Prisma.InputJsonValue;
 }
 
-/** Records an entry on the activity timeline. Fire-and-forget safe. */
-export async function logActivity(input: LogActivityInput) {
-  const activity = await prisma.activity.create({
+type ActivityClient = typeof prisma | Prisma.TransactionClient;
+
+/** Persists an activity using the caller's transaction when supplied. */
+export async function persistActivity(input: LogActivityInput, client: ActivityClient = prisma) {
+  return client.activity.create({
     data: {
       type: input.type,
       summary: input.summary,
@@ -25,11 +27,21 @@ export async function logActivity(input: LogActivityInput) {
       metadata: input.metadata,
     },
   });
+}
+
+/** Invalidates caches after the activity write has committed. */
+export async function invalidateActivityCache(input: LogActivityInput) {
   await invalidateCache(
     'analytics',
     ...(input.customerId ? [`customer:${input.customerId}`, `ai:customer:${input.customerId}`] : []),
     ...(input.leadId ? [`lead:${input.leadId}`] : []),
   );
+}
+
+/** Records an entry on the activity timeline. Fire-and-forget safe. */
+export async function logActivity(input: LogActivityInput) {
+  const activity = await persistActivity(input);
+  await invalidateActivityCache(input);
   return activity;
 }
 

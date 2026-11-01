@@ -21,6 +21,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "lint": "eslint \"src/**/*.ts\"",
+    "test:architecture": "tsx --test src/architecture/*.test.ts",
+    "test:transactions": "tsx --test src/modules/transactions.integration.test.ts",
     "test:database-security": "tsx --test src/database/*.test.ts",
     "test:performance": "tsx --test src/performance/*.test.ts"
   },

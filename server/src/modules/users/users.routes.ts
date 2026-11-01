@@ -1,23 +1,18 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { Request, Response } from 'express';
-import { prisma } from '../../lib/prisma.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { sendSuccess } from '../../utils/apiResponse.js';
-import { ApiError } from '../../utils/ApiError.js';
-import { hashPassword, verifyPassword } from '../../utils/password.js';
 import { passwordSchema } from '../auth/auth.validation.js';
-import { logger } from '../../lib/logger.js';
 import { requireStepUp } from '../../middleware/requireStepUp.js';
-import { passwordSecurityService } from '../auth/password-security.service.js';
-
-const publicUser = {
-  id: true, email: true, firstName: true, lastName: true, role: true,
-  avatarUrl: true, title: true, phone: true, isActive: true, createdAt: true,
-} as const;
+import {
+  usersService,
+  type UpdateProfileInput,
+  type UpdateUserAccessInput,
+} from './users.service.js';
 
 const idParam = z.object({ id: z.string().cuid('Invalid id') });
 const updateProfileSchema = z.object({
@@ -43,8 +38,7 @@ usersRouter.use(authenticate);
 usersRouter.get(
   '/',
   asyncHandler(async (_req: Request, res: Response) => {
-    const users = await prisma.user.findMany({ where: { isActive: true }, select: publicUser, orderBy: { firstName: 'asc' } });
-    return sendSuccess(res, users);
+    return sendSuccess(res, await usersService.listActive());
   }),
 );
 
@@ -54,12 +48,7 @@ usersRouter.patch(
   validate({ body: updateProfileSchema }),
   asyncHandler(async (req: Request, res: Response) => {
     const data = req.body as z.infer<typeof updateProfileSchema>;
-    const user = await prisma.user.update({
-      where: { id: req.user!.sub },
-      data: { ...data, avatarUrl: data.avatarUrl || null },
-      select: publicUser,
-    });
-    return sendSuccess(res, user);
+    return sendSuccess(res, await usersService.updateProfile(req.user!.sub, data as UpdateProfileInput));
   }),
 );
 
@@ -70,19 +59,7 @@ usersRouter.post(
   validate({ body: changePasswordSchema }),
   asyncHandler(async (req: Request, res: Response) => {
     const { currentPassword, newPassword } = req.body as z.infer<typeof changePasswordSchema>;
-    const user = await prisma.user.findUnique({ where: { id: req.user!.sub } });
-    if (!user || !(await verifyPassword(currentPassword, user.passwordHash))) {
-      logger.warn({ event: 'auth.password_change_failed', userId: req.user!.sub }, 'Password change rejected: wrong current password');
-      throw ApiError.badRequest('Current password is incorrect');
-    }
-    await passwordSecurityService.assertAllowed(user.id, newPassword);
-    const passwordHash = await hashPassword(newPassword);
-    await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
-    await passwordSecurityService.record(user.id, passwordHash);
-    // Revoke refresh tokens so other sessions must re-authenticate.
-    await prisma.refreshToken.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
-    logger.info({ event: 'auth.password_changed', userId: user.id }, 'Password changed');
-    return sendSuccess(res, { message: 'Password updated' });
+    return sendSuccess(res, await usersService.changePassword(req.user!.sub, currentPassword, newPassword));
   }),
 );
 
@@ -93,15 +70,13 @@ usersRouter.patch(
   requireStepUp,
   validate({ params: idParam, body: updateRoleSchema }),
   asyncHandler(async (req: Request, res: Response) => {
-    // An admin cannot demote or deactivate their own account.
-    if (req.params.id === req.user!.sub) {
-      throw ApiError.forbidden('You cannot change your own role or status');
-    }
-    const user = await prisma.user.update({
-      where: { id: req.params.id },
-      data: req.body as z.infer<typeof updateRoleSchema>,
-      select: publicUser,
-    });
-    return sendSuccess(res, user);
+    return sendSuccess(
+      res,
+      await usersService.updateAccess(
+        req.user!.sub,
+        req.params.id,
+        req.body as UpdateUserAccessInput,
+      ),
+    );
   }),
 );

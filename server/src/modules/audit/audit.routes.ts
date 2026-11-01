@@ -1,14 +1,12 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
-import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { prisma } from '../../lib/prisma.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
-import { buildPaginationMeta, sendSuccess } from '../../utils/apiResponse.js';
-import { toPrismaPagination } from '../../utils/pagination.js';
+import { sendSuccess } from '../../utils/apiResponse.js';
+import { auditService, type AuditQuery } from './audit.service.js';
 
 const auditQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -27,29 +25,6 @@ const auditQuery = z.object({
   path: ['from'],
 });
 
-type AuditQuery = z.infer<typeof auditQuery>;
-
-function auditWhere(query: AuditQuery): Prisma.AuditLogWhereInput {
-  return {
-    ...(query.userId ? { userId: query.userId } : {}),
-    ...(query.sessionId ? { sessionId: query.sessionId } : {}),
-    ...(query.requestId ? { requestId: query.requestId } : {}),
-    ...(query.resource ? { resource: query.resource } : {}),
-    ...(query.action ? { action: query.action } : {}),
-    ...(query.targetId ? { targetId: query.targetId } : {}),
-    ...(query.success !== undefined ? { success: query.success } : {}),
-    ...(query.from || query.to
-      ? { timestamp: { ...(query.from ? { gte: query.from } : {}), ...(query.to ? { lte: query.to } : {}) } }
-      : {}),
-  };
-}
-
-function csvCell(value: unknown): string {
-  let text = value === null || value === undefined ? '' : String(value);
-  if (/^[=+\-@]/.test(text)) text = `'${text}`;
-  return `"${text.replace(/"/g, '""')}"`;
-}
-
 export const auditRouter = Router();
 auditRouter.use(authenticate, authorize('ADMIN'));
 
@@ -57,29 +32,8 @@ auditRouter.get(
   '/export',
   validate({ query: auditQuery }),
   asyncHandler(async (req: Request, res: Response) => {
-    const query = req.query as unknown as AuditQuery;
-    const logs = await prisma.auditLog.findMany({
-      where: auditWhere(query),
-      orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
-      take: 10_000,
-    });
-    const rows = [
-      ['Timestamp', 'Request ID', 'User ID', 'Session ID', 'IP', 'User Agent', 'Resource', 'Action', 'Target ID', 'Outcome', 'Status Code'],
-      ...logs.map((log) => [
-        log.timestamp.toISOString(),
-        log.requestId,
-        log.userId,
-        log.sessionId,
-        log.ip,
-        log.userAgent,
-        log.resource,
-        log.action,
-        log.targetId,
-        log.success ? 'SUCCESS' : 'FAILURE',
-        log.statusCode,
-      ]),
-    ];
-    const csv = rows.map((row) => row.map(csvCell).join(',')).join('\r\n');
+    const query = req.query as unknown as z.infer<typeof auditQuery>;
+    const csv = await auditService.exportCsv(query as AuditQuery);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="audit-logs-${new Date().toISOString().slice(0, 10)}.csv"`);
     return res.status(200).send(csv);
@@ -90,16 +44,8 @@ auditRouter.get(
   '/',
   validate({ query: auditQuery }),
   asyncHandler(async (req: Request, res: Response) => {
-    const query = req.query as unknown as AuditQuery;
-    const where = auditWhere(query);
-    const [items, total] = await Promise.all([
-      prisma.auditLog.findMany({
-        where,
-        orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
-        ...toPrismaPagination(query.page, query.limit),
-      }),
-      prisma.auditLog.count({ where }),
-    ]);
-    return sendSuccess(res, items, 200, buildPaginationMeta(query.page, query.limit, total));
+    const query = req.query as unknown as z.infer<typeof auditQuery>;
+    const { items, meta } = await auditService.list(query as AuditQuery);
+    return sendSuccess(res, items, 200, meta);
   }),
 );

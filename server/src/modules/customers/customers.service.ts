@@ -3,7 +3,7 @@ import { fieldSecurity, prisma } from '../../lib/prisma.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { buildPaginationMeta } from '../../utils/apiResponse.js';
 import { toPrismaPagination } from '../../utils/pagination.js';
-import { logActivity } from '../../services/activity.service.js';
+import { invalidateActivityCache, persistActivity } from '../../services/activity.service.js';
 import type { CustomerListQuery } from './customers.validation.js';
 import { cached, cacheTtl, invalidateCache } from '../../performance/cache.js';
 
@@ -108,35 +108,49 @@ export const customersService = {
 
   async create(actor: Actor, data: Record<string, unknown>) {
     const ownerId = (data.ownerId as string) || actor.id;
-    const customer = await prisma.customer.create({
-      data: {
-        ...(data as object),
-        email: (data.email as string) || null,
-        website: (data.website as string) || null,
-        ownerId,
-      } as Prisma.CustomerUncheckedCreateInput,
-    });
-    await logActivity({
-      type: 'STATUS_CHANGE',
-      summary: `Customer "${customer.name}" created`,
+    const activity = {
+      type: 'STATUS_CHANGE' as const,
+      summary: '',
       userId: actor.id,
-      customerId: customer.id,
+    };
+    const customer = await prisma.$transaction(async (tx) => {
+      const created = await tx.customer.create({
+        data: {
+          ...(data as object),
+          email: (data.email as string) || null,
+          website: (data.website as string) || null,
+          ownerId,
+        } as Prisma.CustomerUncheckedCreateInput,
+      });
+      activity.summary = `Customer "${created.name}" created`;
+      await persistActivity({ ...activity, customerId: created.id }, tx);
+      return created;
     });
+    await invalidateActivityCache({ ...activity, customerId: customer.id });
     await invalidateCache('customers', 'analytics', `customer:${customer.id}`, `ai:customer:${customer.id}`);
     return customer;
   },
 
   async update(actor: Actor, id: string, data: Record<string, unknown>) {
     await this.getById(actor, id); // enforces access + existence
-    const customer = await prisma.customer.update({
-      where: { id },
-      data: {
-        ...(data as object),
-        ...(data.email !== undefined ? { email: (data.email as string) || null } : {}),
-        ...(data.website !== undefined ? { website: (data.website as string) || null } : {}),
-      } as Prisma.CustomerUncheckedUpdateInput,
+    const customer = await prisma.$transaction(async (tx) => {
+      const updated = await tx.customer.update({
+        where: { id },
+        data: {
+          ...(data as object),
+          ...(data.email !== undefined ? { email: (data.email as string) || null } : {}),
+          ...(data.website !== undefined ? { website: (data.website as string) || null } : {}),
+        } as Prisma.CustomerUncheckedUpdateInput,
+      });
+      await persistActivity({
+        type: 'STATUS_CHANGE',
+        summary: `Customer "${updated.name}" updated`,
+        userId: actor.id,
+        customerId: updated.id,
+      }, tx);
+      return updated;
     });
-    await logActivity({
+    await invalidateActivityCache({
       type: 'STATUS_CHANGE',
       summary: `Customer "${customer.name}" updated`,
       userId: actor.id,
